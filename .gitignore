@@ -1,0 +1,11 @@
+# Local secrets
+config/local_settings.py
+.env
+
+# Data and logs
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
