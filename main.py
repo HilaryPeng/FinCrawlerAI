@@ -8,6 +8,7 @@ import time
 import argparse
 from datetime import datetime
 from pathlib import Path
+import json
 
 # 添加src目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -20,6 +21,60 @@ from output.markdown_gen import MarkdownGenerator
 from config.settings import get_config
 from utils.state import load_state, save_state
 from notifier.feishu import FeishuNotifier
+
+
+def write_run_report(config, report: dict, filename_prefix: str = "run_report") -> dict:
+    """写入运行健康报告（json + markdown），便于长期稳定运行监控。"""
+    ts_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = config.PROCESSED_DATA_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = out_dir / f"{filename_prefix}_{ts_label}.json"
+    md_path = out_dir / f"{filename_prefix}_{ts_label}.md"
+
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    lines = [
+        "# 运行健康报告",
+        "",
+        f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        f"- **命令**: {report.get('command', '')}",
+        f"- **状态**: {report.get('status', '')}",
+        f"- **总耗时(秒)**: {report.get('elapsed_seconds', 0)}",
+        "",
+        "## 来源明细",
+        "",
+    ]
+    for s in report.get("sources", []):
+        lines.append(f"### {s.get('name', 'unknown')}")
+        lines.append(f"- **状态**: {s.get('status', '')}")
+        lines.append(f"- **耗时(秒)**: {s.get('elapsed_seconds', 0)}")
+        lines.append(f"- **抓取条数**: {s.get('fetched', 0)}")
+        lines.append(f"- **清洗后条数**: {s.get('cleaned', 0)}")
+        lines.append(f"- **事件数**: {s.get('events', 0)}")
+        tr = s.get("time_range")
+        if tr:
+            lines.append(f"- **时间范围**: {tr}")
+        err = s.get("error")
+        if err:
+            lines.append(f"- **错误**: {err}")
+        out = s.get("outputs", {})
+        if out:
+            lines.append("- **输出**:")
+            for k, v in out.items():
+                lines.append(f"  - {k}: {v}")
+        lines.append("")
+
+    if report.get("errors"):
+        lines.append("## 错误汇总")
+        lines.append("")
+        for e in report.get("errors", []):
+            lines.append(f"- {e}")
+        lines.append("")
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(md_path)}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -92,19 +147,25 @@ def main():
     markdown_gen = MarkdownGenerator(config)
     
     try:
+        run_started = time.perf_counter()
         raw_news = []
         now_ts = int(time.time())
 
         if args.command == "cailian":
+            s_started = time.perf_counter()
+            source_report = {"name": "财联社", "status": "ok", "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
             scraper = CailianScraper(config)
             print("📡 正在抓取财联社新闻...")
             state = load_state(config.STATE_FILE)
             last_run_ts = state.get("last_run_ts")
             since_ts = int(last_run_ts) if isinstance(last_run_ts, int) else now_ts - config.CRAWL_LOOKBACK_SECONDS
             raw_news = scraper.scrape_news(since_ts=since_ts, until_ts=now_ts)
+            source_report["fetched"] = len(raw_news)
             print(f"✅ 成功抓取 {len(raw_news)} 条财联社新闻")
 
         elif args.command == "jygs":
+            s_started = time.perf_counter()
+            source_report = {"name": "韭研公社", "status": "ok", "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
             jygs_scraper = JiuyangongsheScraper(config)
 
             # 关注的人（单独落盘）
@@ -138,6 +199,7 @@ def main():
             if args.action_date:
                 print(f"📡 正在抓取韭研公社异动解析: {args.action_date}...")
                 raw_news = jygs_scraper.scrape_action_as_news(args.action_date)
+                source_report["fetched"] = len(raw_news)
                 print(f"✅ 成功抓取 {len(raw_news)} 条韭研公社异动解析")
             else:
                 # 仅抓关注的人时，不走聚合输出
@@ -146,9 +208,12 @@ def main():
         elif args.command in ("all", "collect"):
             source_sections = []
             errors = []
+            per_sources = []
+            run_cmd = args.command
 
             # 财联社
             try:
+                s_started = time.perf_counter()
                 scraper = CailianScraper(config)
                 print("📡 正在抓取财联社新闻...")
                 state = load_state(config.STATE_FILE)
@@ -156,9 +221,13 @@ def main():
                 since_ts = int(last_run_ts) if isinstance(last_run_ts, int) else now_ts - config.CRAWL_LOOKBACK_SECONDS
                 cailian_news = scraper.scrape_news(since_ts=since_ts, until_ts=now_ts)
                 print(f"✅ 成功抓取 {len(cailian_news)} 条财联社新闻")
+                s_rep = {"name": "财联社", "status": "ok", "fetched": len(cailian_news), "cleaned": 0, "events": 0, "outputs": {}}
                 if cailian_news:
                     cleaned = cleaner.clean_news(cailian_news)
+                    s_rep["cleaned"] = len(cleaned)
                     aggregated = aggregator.aggregate(cleaned)
+                    s_rep["events"] = len(aggregated.get("events", []) or [])
+                    s_rep["time_range"] = (aggregated.get("summary", {}) or {}).get("time_range")
                     markdown_path = markdown_gen.generate(aggregated)
                     summary_path = markdown_gen.generate_summary(
                         aggregated,
@@ -166,6 +235,7 @@ def main():
                         report_title="# 财联社快讯简报（摘要）",
                         source_type="cailian",
                     )
+                    s_rep["outputs"] = {"summary": summary_path, "full": markdown_path}
 
                     if args.command == "all" and args.notify:
                         source_sections.append(("财联社", summary_path, markdown_path))
@@ -186,17 +256,25 @@ def main():
                         )
             except Exception as exc:
                 errors.append(f"财联社抓取失败: {exc}")
+                s_rep = {"name": "财联社", "status": "error", "error": str(exc), "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
+            s_rep["elapsed_seconds"] = round(time.perf_counter() - s_started, 2)
+            per_sources.append(s_rep)
 
             # 韭研公社异动解析
             try:
+                s_started = time.perf_counter()
                 jygs_scraper = JiuyangongsheScraper(config)
                 action_date = args.jygs_action_date or datetime.now().strftime("%Y-%m-%d")
                 print(f"📡 正在抓取韭研公社异动解析: {action_date}...")
                 jygs_news = jygs_scraper.scrape_action_as_news(action_date)
                 print(f"✅ 成功抓取 {len(jygs_news)} 条韭研公社异动解析")
+                s_rep = {"name": "韭研公社", "status": "ok", "fetched": len(jygs_news), "cleaned": 0, "events": 0, "outputs": {}}
                 if jygs_news:
                     cleaned = cleaner.clean_news(jygs_news)
+                    s_rep["cleaned"] = len(cleaned)
                     aggregated = aggregator.aggregate(cleaned)
+                    s_rep["events"] = len(aggregated.get("events", []) or [])
+                    s_rep["time_range"] = (aggregated.get("summary", {}) or {}).get("time_range")
                     date_label = (action_date or "").replace("-", "")
                     prefix = f"jiuyangongshe_action_{date_label}" if date_label else "jiuyangongshe_action"
                     report_title = f"# 韭研公社异动解析研究简报（{action_date}）"
@@ -211,10 +289,14 @@ def main():
                         report_title=f"# 韭研公社异动解析简报（摘要）（{action_date}）",
                         source_type="jygs",
                     )
+                    s_rep["outputs"] = {"summary": summary_path, "full": markdown_path}
                     if args.command == "all" and args.notify:
                         source_sections.append(("韭研公社", summary_path, markdown_path))
             except Exception as exc:
                 errors.append(f"韭研公社抓取失败: {exc}")
+                s_rep = {"name": "韭研公社", "status": "error", "error": str(exc), "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
+            s_rep["elapsed_seconds"] = round(time.perf_counter() - s_started, 2)
+            per_sources.append(s_rep)
 
             if args.command == "all" and args.notify and source_sections:
                 notifier = FeishuNotifier(config)
@@ -229,6 +311,19 @@ def main():
                 print("⚠️ 部分任务失败:")
                 for err in errors:
                     print(f"- {err}")
+
+            report_paths = write_run_report(
+                config,
+                {
+                    "command": run_cmd,
+                    "status": "ok" if not errors else "partial",
+                    "elapsed_seconds": round(time.perf_counter() - run_started, 2),
+                    "sources": per_sources,
+                    "errors": errors,
+                },
+                filename_prefix=f"run_report_{run_cmd}",
+            )
+            print(f"📋 健康报告已生成: {report_paths['markdown']}")
 
             print("🎉 任务完成！")
             return
@@ -308,11 +403,16 @@ def main():
         # 2. 数据清洗
         print("🧹 正在清洗数据...")
         cleaned_news = cleaner.clean_news(raw_news)
+        if "source_report" in locals():
+            source_report["cleaned"] = len(cleaned_news)
         print(f"✅ 清洗后剩余 {len(cleaned_news)} 条内容")
 
         # 3. 数据聚合
         print("📊 正在聚合数据...")
         aggregated_data = aggregator.aggregate(cleaned_news)
+        if "source_report" in locals():
+            source_report["events"] = len(aggregated_data.get("events", []) or [])
+            source_report["time_range"] = (aggregated_data.get("summary", {}) or {}).get("time_range")
 
         # 4. 生成输出
         print("📝 正在生成输出文件...")
@@ -344,6 +444,8 @@ def main():
 
         print(f"✅ Markdown文件已生成: {markdown_file}")
         print(f"✅ 摘要文件已生成: {summary_file}")
+        if "source_report" in locals():
+            source_report["outputs"] = {"summary": summary_file, "full": markdown_file}
         
         # 只在财联社任务里更新增量状态
         if args.command == "cailian":
@@ -360,6 +462,22 @@ def main():
                         "fetched_count": len(raw_news),
                     },
                 )
+
+        # 写入健康报告
+        if "source_report" in locals():
+            source_report["elapsed_seconds"] = round(time.perf_counter() - s_started, 2)
+            report_paths = write_run_report(
+                config,
+                {
+                    "command": args.command,
+                    "status": "ok",
+                    "elapsed_seconds": round(time.perf_counter() - run_started, 2),
+                    "sources": [source_report],
+                    "errors": [],
+                },
+                filename_prefix=f"run_report_{args.command}",
+            )
+            print(f"📋 健康报告已生成: {report_paths['markdown']}")
 
         print("🎉 新闻收集完成！")
         

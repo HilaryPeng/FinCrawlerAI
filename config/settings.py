@@ -38,6 +38,14 @@ class Config:
     REQUEST_DELAY = 2  # 请求间隔（秒）
     MAX_RETRIES = 3  # 最大重试次数
     TIMEOUT = 30  # 请求超时（秒）
+    # 网络增强（更稳）：额外重试/退避配置（不影响原有 MAX_RETRIES/TIMEOUT）
+    HTTP_MAX_RETRIES = 3
+    HTTP_BACKOFF_BASE_SECONDS = 0.8
+    HTTP_BACKOFF_CAP_SECONDS = 10.0
+    # 原始响应缓存（便于回放排错，默认开启；data/ 已被 .gitignore）
+    RAW_CACHE_ENABLED = True
+    # 回放模式：优先使用 data/raw/http_cache 里的缓存响应（调试时开启）
+    RAW_CACHE_REPLAY = False
     PAGE_SIZE = 20  # 每次请求条数
     MAX_PAGES = 30  # 最大翻页次数
     

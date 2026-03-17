@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from utils.http_client import HttpClient
+
 
 @dataclass
 class JYGSAuth:
@@ -40,6 +42,8 @@ class JiuyangongsheScraper:
 
         self.www = requests.Session()
         self.api = requests.Session()
+        self.www_http = HttpClient(config, session=self.www, source="jygs_www")
+        self.api_http = HttpClient(config, session=self.api, source="jygs_api")
 
         # Jiuyangongshe WAF is sensitive to headers; keep UA modern.
         self._www_headers = {
@@ -257,8 +261,7 @@ class JiuyangongsheScraper:
     # -----------------------------
     def _fetch_nuxt_state_from_action(self, date: str) -> Dict[str, Any]:
         url = f"{self.WWW_BASE}/action/{date}"
-        resp = self.www.get(url, headers=self._www_headers, timeout=self.config.TIMEOUT)
-        resp.raise_for_status()
+        resp = self.www_http.get(url, headers=self._www_headers)
         html = resp.text
 
         # Extract JS expression assigned to window.__NUXT__
@@ -358,9 +361,8 @@ class JiuyangongsheScraper:
         headers = dict(self._api_base_headers)
         headers.update(self._signed_headers())
 
-        resp = self.api.post(url, headers=headers, json=payload, timeout=self.config.TIMEOUT)
-        resp.raise_for_status()
         try:
+            resp = self.api_http.post_json(url, json_body=payload, headers=headers)
             return resp.json()
         except Exception as exc:
             raise RuntimeError(f"API returned non-JSON for {path}") from exc

@@ -10,6 +10,8 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
+from utils.http_client import HttpClient
+
 
 class CailianScraper:
     """财联社新闻抓取器"""
@@ -18,6 +20,7 @@ class CailianScraper:
         self.config = config
         self.session = requests.Session()
         self.session.headers.update(config.REQUEST_HEADERS)
+        self.http = HttpClient(config, session=self.session, source="cailian")
     
     def scrape_news(self, since_ts: Optional[int] = None, until_ts: Optional[int] = None) -> List[Dict]:
         """抓取新闻列表"""
@@ -54,10 +57,8 @@ class CailianScraper:
         """从网页抓取新闻"""
         try:
             url = self.config.CAILIAN_BASE_URL
-            response = self.session.get(url, timeout=self.config.TIMEOUT)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
+            resp = self.http.get(url)
+            soup = BeautifulSoup(resp.content, 'html.parser')
             return self._parse_web_content(soup)
             
         except Exception as e:
@@ -120,9 +121,8 @@ class CailianScraper:
         """请求快讯列表API"""
         api_url = f"{self.config.CAILIAN_BASE_URL}{self.config.CAILIAN_TELEGRAPH_API_PATH}"
         signed_params = self._sign_params(params)
-        response = self.session.get(api_url, params=signed_params, timeout=self.config.TIMEOUT)
-        response.raise_for_status()
-        return response.json()
+        resp = self.http.get(api_url, params=signed_params)
+        return resp.json()
 
     def _sign_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """生成签名参数"""

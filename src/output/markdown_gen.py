@@ -68,13 +68,51 @@ class MarkdownGenerator:
 
         summary = data.get('summary', {})
         stats = data.get('statistics', {})
+        events = data.get("events", []) or []
 
         content.append("## 研究摘要")
         content.append("")
         content.append(f"- **新闻总数**: {summary.get('total_news', 0)}")
+        if isinstance(stats, dict) and stats.get("event_count") is not None:
+            content.append(f"- **事件总数**: {stats.get('event_count', 0)}")
         content.append(f"- **时间范围**: {summary.get('time_range', '无数据')}")
         content.append(f"- **主要话题**: {', '.join(summary.get('main_topics', []))}")
         content.append("")
+
+        if events:
+            content.append("## 重点事件（归并）")
+            content.append("")
+            top_events = events[:15]
+            for i, ev in enumerate(top_events, start=1):
+                title = ev.get("title", "")
+                score = ev.get("score", 0)
+                count = ev.get("count", 0)
+                sources = ev.get("sources", []) or []
+                reasons = ev.get("reasons", []) or []
+                content.append(f"### {i}. {title}")
+                content.append(f"- **重要性分数**: {score}")
+                content.append(f"- **合并条数**: {count}")
+                if sources:
+                    content.append(f"- **来源覆盖**: {', '.join(sources)}")
+                if reasons:
+                    content.append(f"- **原因**: {'；'.join(reasons[:4])}")
+                # 给出最多 2 条代表性链接
+                rep_items = ev.get("items", []) or []
+                links = []
+                for it in rep_items:
+                    url = (it.get("url") or "").strip()
+                    if not url:
+                        continue
+                    publish_time = it.get("publish_time", "")
+                    src = it.get("source", "")
+                    links.append(f"[{publish_time}] {src} {url}")
+                    if len(links) >= 2:
+                        break
+                if links:
+                    content.append("- **参考链接**:")
+                    for l in links:
+                        content.append(f"  - {l}")
+                content.append("")
 
         tag_dist = stats.get('tag_distribution', {})
         if tag_dist:
@@ -134,10 +172,25 @@ class MarkdownGenerator:
         content.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         content.append("")
 
+        events = data.get("events", []) or []
         raw_news = data.get('raw_news', [])
         sorted_news = self._sort_news(raw_news)
 
         if source_type == "jygs":
+            if events:
+                content.append("## 重点事件（归并）")
+                content.append("")
+                for ev in events[:12]:
+                    title = ev.get("title", "")
+                    score = ev.get("score", 0)
+                    count = ev.get("count", 0)
+                    reasons = ev.get("reasons", []) or []
+                    mark = "🔥 " if any(k in f"{title} " + " ".join(reasons) for k in ["连板", "涨停", "高度", "封板"]) else ""
+                    content.append(f"- {mark}{title}（分数{score}，{count}条）")
+                    if reasons:
+                        content.append(f"  - {('；'.join(reasons[:3]))}")
+                content.append("")
+
             content.append("## 连板/高度重点")
             content.append("")
             highlights = self._jygs_highlights(sorted_news, limit=15)
@@ -152,6 +205,19 @@ class MarkdownGenerator:
             for item in self._format_news_list(sorted_news[:15]):
                 content.append(item)
             return '\n'.join(content)
+
+        if events:
+            content.append("## Top 事件（归并）")
+            content.append("")
+            for ev in events[:10]:
+                title = ev.get("title", "")
+                score = ev.get("score", 0)
+                count = ev.get("count", 0)
+                reasons = ev.get("reasons", []) or []
+                content.append(f"- {title}（分数{score}，{count}条）")
+                if reasons:
+                    content.append(f"  - {('；'.join(reasons[:3]))}")
+            content.append("")
 
         content.append("## 关键要点")
         content.append("")
