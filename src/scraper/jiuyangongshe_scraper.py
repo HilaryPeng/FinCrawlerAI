@@ -72,6 +72,12 @@ class JiuyangongsheScraper:
         self._user_info: Optional[Dict[str, Any]] = None
         self._token_seed_prefix: str = self._load_token_seed_prefix()
 
+    def http_stats(self) -> Dict[str, Any]:
+        return {
+            "www": self.www_http.stats(),
+            "api": self.api_http.stats(),
+        }
+
     def _load_token_seed_prefix(self) -> str:
         """Load signing seed prefix for endpoints that require it.
 

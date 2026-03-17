@@ -124,6 +124,28 @@ def write_run_report(config, report: dict, filename_prefix: str = "run_report") 
             lines.append("- **输出**:")
             for k, v in out.items():
                 lines.append(f"  - {k}: {v}")
+
+        http_stats = s.get("http")
+        if http_stats:
+            lines.append("- **HTTP 统计**:")
+            if isinstance(http_stats, dict) and ("www" in http_stats or "api" in http_stats):
+                www = http_stats.get("www") or {}
+                api = http_stats.get("api") or {}
+                lines.append(f"  - www: {www.get('requests_total', 0)} req, {www.get('retries_total', 0)} retries, {www.get('errors_total', 0)} errors, avg {www.get('latency_ms_avg', 0)} ms")
+                lines.append(f"  - api: {api.get('requests_total', 0)} req, {api.get('retries_total', 0)} retries, {api.get('errors_total', 0)} errors, avg {api.get('latency_ms_avg', 0)} ms")
+                sc_www = www.get("status_counts")
+                sc_api = api.get("status_counts")
+                if sc_www:
+                    lines.append(f"  - www status: {sc_www}")
+                if sc_api:
+                    lines.append(f"  - api status: {sc_api}")
+            else:
+                # single client
+                lines.append(
+                    f"  - {http_stats.get('requests_total', 0)} req, {http_stats.get('retries_total', 0)} retries, "
+                    f"{http_stats.get('errors_total', 0)} errors, avg {http_stats.get('latency_ms_avg', 0)} ms, "
+                    f"status {http_stats.get('status_counts', {})}"
+                )
         lines.append("")
 
     if report.get("errors"):
@@ -221,6 +243,7 @@ def main():
             since_ts = int(last_run_ts) if isinstance(last_run_ts, int) else now_ts - config.CRAWL_LOOKBACK_SECONDS
             raw_news = scraper.scrape_news(since_ts=since_ts, until_ts=now_ts)
             source_report["fetched"] = len(raw_news)
+            source_report["http"] = scraper.http_stats()
             print(f"✅ 成功抓取 {len(raw_news)} 条财联社新闻")
 
         elif args.command == "jygs":
@@ -260,6 +283,7 @@ def main():
                 print(f"📡 正在抓取韭研公社异动解析: {args.action_date}...")
                 raw_news = jygs_scraper.scrape_action_as_news(args.action_date)
                 source_report["fetched"] = len(raw_news)
+                source_report["http"] = jygs_scraper.http_stats()
                 print(f"✅ 成功抓取 {len(raw_news)} 条韭研公社异动解析")
             else:
                 # 仅抓关注的人时，不走聚合输出
@@ -282,6 +306,7 @@ def main():
                 cailian_news = scraper.scrape_news(since_ts=since_ts, until_ts=now_ts)
                 print(f"✅ 成功抓取 {len(cailian_news)} 条财联社新闻")
                 s_rep = {"name": "财联社", "status": "ok", "fetched": len(cailian_news), "cleaned": 0, "events": 0, "outputs": {}}
+                s_rep["http"] = scraper.http_stats()
                 if cailian_news:
                     cleaned = cleaner.clean_news(cailian_news)
                     s_rep["cleaned"] = len(cleaned)
@@ -329,6 +354,7 @@ def main():
                 jygs_news = jygs_scraper.scrape_action_as_news(action_date)
                 print(f"✅ 成功抓取 {len(jygs_news)} 条韭研公社异动解析")
                 s_rep = {"name": "韭研公社", "status": "ok", "fetched": len(jygs_news), "cleaned": 0, "events": 0, "outputs": {}}
+                s_rep["http"] = jygs_scraper.http_stats()
                 if jygs_news:
                     cleaned = cleaner.clean_news(jygs_news)
                     s_rep["cleaned"] = len(cleaned)

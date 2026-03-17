@@ -21,6 +21,9 @@ class CailianScraper:
         self.session = requests.Session()
         self.session.headers.update(config.REQUEST_HEADERS)
         self.http = HttpClient(config, session=self.session, source="cailian")
+
+    def http_stats(self) -> Dict[str, Any]:
+        return self.http.stats()
     
     def scrape_news(self, since_ts: Optional[int] = None, until_ts: Optional[int] = None) -> List[Dict]:
         """抓取新闻列表"""

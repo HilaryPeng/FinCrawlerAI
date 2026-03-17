@@ -5,9 +5,9 @@ import json
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import requests
 
@@ -25,6 +25,55 @@ class HttpResponse:
     @property
     def text(self) -> str:
         return self.content.decode("utf-8", errors="replace")
+
+
+@dataclass
+class HttpStats:
+    source: str
+    requests_total: int = 0
+    replay_hits: int = 0
+    retries_total: int = 0
+    errors_total: int = 0
+    status_counts: Dict[str, int] = field(default_factory=dict)  # "2xx"/"3xx"/"4xx"/"5xx"/"429"/"other"
+    latency_ms_total: float = 0.0
+    latency_ms_max: float = 0.0
+    samples: int = 0
+    last_errors: List[str] = field(default_factory=list)
+
+    def add_status(self, status_code: int) -> None:
+        key = "other"
+        if status_code == 429:
+            key = "429"
+        elif 200 <= status_code <= 299:
+            key = "2xx"
+        elif 300 <= status_code <= 399:
+            key = "3xx"
+        elif 400 <= status_code <= 499:
+            key = "4xx"
+        elif 500 <= status_code <= 599:
+            key = "5xx"
+        self.status_counts[key] = int(self.status_counts.get(key, 0)) + 1
+
+    def add_latency_ms(self, ms: float) -> None:
+        self.latency_ms_total += float(ms)
+        if ms > self.latency_ms_max:
+            self.latency_ms_max = float(ms)
+        self.samples += 1
+
+    def as_dict(self) -> Dict[str, Any]:
+        avg = (self.latency_ms_total / self.samples) if self.samples else 0.0
+        return {
+            "source": self.source,
+            "requests_total": self.requests_total,
+            "replay_hits": self.replay_hits,
+            "retries_total": self.retries_total,
+            "errors_total": self.errors_total,
+            "status_counts": dict(self.status_counts),
+            "latency_ms_avg": round(avg, 2),
+            "latency_ms_max": round(self.latency_ms_max, 2),
+            "samples": self.samples,
+            "last_errors": list(self.last_errors),
+        }
 
 
 class HttpClient:
@@ -56,6 +105,10 @@ class HttpClient:
 
         raw_dir = getattr(config, "RAW_DATA_DIR", None)
         self.cache_dir = Path(raw_dir) / "http_cache" / self.source if raw_dir else None
+        self._stats = HttpStats(source=self.source)
+
+    def stats(self) -> Dict[str, Any]:
+        return self._stats.as_dict()
 
     def get(
         self,
@@ -84,16 +137,19 @@ class HttpClient:
         json: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> HttpResponse:
+        self._stats.requests_total += 1
         key = self._cache_key(method, url, params=params, json=json, headers=headers)
 
         if self.replay_cache:
             cached = self._load_cache(key)
             if cached is not None:
+                self._stats.replay_hits += 1
                 return cached
 
         last_exc: Optional[BaseException] = None
         for attempt in range(self.max_retries + 1):
             try:
+                t0 = time.perf_counter()
                 resp = self.session.request(
                     method=method.upper(),
                     url=url,
@@ -102,10 +158,14 @@ class HttpClient:
                     headers=headers,
                     timeout=self.timeout,
                 )
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                self._stats.add_latency_ms(dt_ms)
+                self._stats.add_status(int(resp.status_code))
 
                 # Retry on 429 / 5xx
                 if resp.status_code == 429 or 500 <= resp.status_code <= 599:
                     if attempt < self.max_retries:
+                        self._stats.retries_total += 1
                         self._sleep_backoff(attempt, resp)
                         continue
 
@@ -125,7 +185,13 @@ class HttpClient:
 
             except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
                 last_exc = exc
+                self._stats.errors_total += 1
+                msg = f"{type(exc).__name__}: {str(exc)[:200]}"
+                self._stats.last_errors.append(msg)
+                if len(self._stats.last_errors) > 5:
+                    self._stats.last_errors = self._stats.last_errors[-5:]
                 if attempt < self.max_retries:
+                    self._stats.retries_total += 1
                     self._sleep_backoff(attempt, None)
                     continue
                 raise
