@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import json
+from typing import Optional, Tuple, List
 
 # 添加src目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -206,11 +207,124 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     notify_parser.add_argument("--jygs-file", default=None, help="Use specific Jiuyangongshe Markdown file")
     notify_parser.add_argument("--title", default=None, help="Custom message title")
 
+    # 导出（打包给 GPT）
+    export_parser = subparsers.add_parser("export", help="Export a single Markdown packet for GPT analysis")
+    export_parser.add_argument("--include-full", action="store_true", help="Include truncated full feeds in packet")
+    export_parser.add_argument("--max-full-chars", type=int, default=20000, help="Max chars per full feed to include")
+    export_parser.add_argument("--output", default=None, help="Output markdown path (default: data/processed/gpt_packet_*.md)")
+    export_parser.add_argument("--run-report", default=None, help="Use specific run_report markdown file")
+    export_parser.add_argument("--cailian-summary", default=None, help="Use specific cailian summary markdown file")
+    export_parser.add_argument("--cailian-full", default=None, help="Use specific cailian full markdown file")
+    export_parser.add_argument("--jygs-summary", default=None, help="Use specific jygs summary markdown file")
+    export_parser.add_argument("--jygs-full", default=None, help="Use specific jygs full markdown file")
+
     args = parser.parse_args(argv)
     # Backward-compatible default
     if not args.command:
         args.command = "cailian"
     return args
+
+
+def _latest_file(dir_path: Path, pattern: str, *, must_contain: Optional[str] = None) -> Optional[Path]:
+    files = sorted(dir_path.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    if must_contain:
+        files = [p for p in files if must_contain in p.name]
+    return files[0] if files else None
+
+
+def _resolve_export_path(config, value: Optional[str], fallback: Optional[Path]) -> Optional[Path]:
+    if value:
+        p = Path(value)
+        if not p.is_absolute():
+            p = config.PROCESSED_DATA_DIR / value
+        return p if p.exists() else None
+    return fallback
+
+
+def _read_text_truncated(path: Path, max_chars: int) -> Tuple[str, bool]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if max_chars > 0 and len(text) > max_chars:
+        return text[:max_chars], True
+    return text, False
+
+
+def export_gpt_packet(config, args: argparse.Namespace) -> str:
+    out_dir: Path = config.PROCESSED_DATA_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Auto-pick latest artifacts
+    latest_run_report = _latest_file(out_dir, "run_report_*.md")
+    latest_cailian_summary = _latest_file(out_dir, "cailian_news_*_summary_*.md") or _latest_file(out_dir, "cailian_news_summary_*.md")
+    latest_cailian_full = _latest_file(out_dir, "cailian_news_*.md", must_contain="_summary_")  # intentionally wrong; fix below
+
+    # Fix full selection: exclude summary
+    latest_cailian_full = _latest_file(out_dir, "cailian_news_*.md")
+    if latest_cailian_full and "_summary_" in latest_cailian_full.name:
+        # find next non-summary
+        candidates = sorted(out_dir.glob("cailian_news_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        latest_cailian_full = next((p for p in candidates if "_summary_" not in p.name), None)
+
+    latest_jygs_summary = _latest_file(out_dir, "jiuyangongshe_action_*_summary_*.md") or _latest_file(out_dir, "jiuyangongshe_action_summary_*.md")
+    latest_jygs_full = _latest_file(out_dir, "jiuyangongshe_action_*.md")
+    if latest_jygs_full and "_summary_" in latest_jygs_full.name:
+        candidates = sorted(out_dir.glob("jiuyangongshe_action_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        latest_jygs_full = next((p for p in candidates if "_summary_" not in p.name), None)
+
+    run_report_path = _resolve_export_path(config, getattr(args, "run_report", None), latest_run_report)
+    cailian_summary_path = _resolve_export_path(config, getattr(args, "cailian_summary", None), latest_cailian_summary)
+    cailian_full_path = _resolve_export_path(config, getattr(args, "cailian_full", None), latest_cailian_full)
+    jygs_summary_path = _resolve_export_path(config, getattr(args, "jygs_summary", None), latest_jygs_summary)
+    jygs_full_path = _resolve_export_path(config, getattr(args, "jygs_full", None), latest_jygs_full)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = Path(args.output) if getattr(args, "output", None) else (out_dir / f"gpt_packet_{ts}.md")
+    if not out_path.is_absolute():
+        out_path = out_dir / out_path
+
+    lines: List[str] = []
+    lines.append("# GPT 分析资料包")
+    lines.append("")
+    lines.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("## 使用说明")
+    lines.append("")
+    lines.append("- 这是一份用于直接粘贴给 GPT 的资料包（包含健康报告 + 两源摘要 + 可选全量截断）")
+    lines.append("- 若出现“⚠️ 风险提示”，请 GPT 先判断本次数据是否可信/是否需要补采")
+    lines.append("")
+
+    def add_section(title: str, p: Optional[Path], *, truncate: bool = False):
+        lines.append(f"## {title}")
+        lines.append("")
+        if not p or not p.exists():
+            lines.append("- （未找到文件）")
+            lines.append("")
+            return
+        lines.append(f"- 文件: {p}")
+        lines.append("")
+        if truncate:
+            text, did = _read_text_truncated(p, int(getattr(args, "max_full_chars", 20000) or 20000))
+            lines.append("```")
+            lines.append(text)
+            if did:
+                lines.append("\n...(已截断)...")
+            lines.append("```")
+        else:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            lines.append("```")
+            lines.append(text)
+            lines.append("```")
+        lines.append("")
+
+    add_section("Run Report（健康报告）", run_report_path)
+    add_section("财联社（摘要）", cailian_summary_path)
+    add_section("韭研公社（摘要）", jygs_summary_path)
+
+    if getattr(args, "include_full", False):
+        add_section("财联社（全量，截断）", cailian_full_path, truncate=True)
+        add_section("韭研公社（全量，截断）", jygs_full_path, truncate=True)
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    return str(out_path)
 
 
 def main():
@@ -412,6 +526,11 @@ def main():
             print(f"📋 健康报告已生成: {report_paths['markdown']}")
 
             print("🎉 任务完成！")
+            return
+
+        elif args.command == "export":
+            out_path = export_gpt_packet(config, args)
+            print(f"✅ GPT资料包已生成: {out_path}")
             return
 
         elif args.command == "notify":
