@@ -110,6 +110,34 @@ JYGS_TOKEN_SEED_PREFIX = "<YOUR_TOKEN_SEED_PREFIX>"
 
 注意：`config/local_settings.py` 已在 `.gitignore` 中，不会提交到仓库。
 
+### 稳定性与排障（推荐）
+
+项目内置了两类“更稳”能力：
+
+- **HTTP 重试/退避**：对超时、连接错误、429、5xx 自动重试，并做指数退避。
+- **原始响应缓存**：把每次请求的响应保存到 `data/raw/http_cache/<source>/`，便于复现和排查站点结构变化（`data/` 已被 `.gitignore` 忽略）。
+
+可在 `config/local_settings.py` 调整（可选）：
+
+```python
+# HTTP 稳定性
+HTTP_MAX_RETRIES = 3
+HTTP_BACKOFF_BASE_SECONDS = 0.8
+HTTP_BACKOFF_CAP_SECONDS = 10.0
+
+# 原始响应缓存/回放（调试用）
+RAW_CACHE_ENABLED = True
+RAW_CACHE_REPLAY = False   # True 时优先读缓存，不走网络
+
+# 健康报告告警阈值（清洗保留率过低会提示）
+HEALTH_MIN_KEEP_RATIO = 0.5
+```
+
+另外也支持环境变量快速切换回放模式：
+
+- `RAW_CACHE_REPLAY=1`：开启回放
+- `RAW_CACHE_ENABLED=0`：关闭缓存
+
 ## 定时调度示例（可选）
 
 ```bash

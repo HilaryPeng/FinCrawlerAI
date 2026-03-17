@@ -46,6 +46,9 @@ class Config:
     RAW_CACHE_ENABLED = True
     # 回放模式：优先使用 data/raw/http_cache 里的缓存响应（调试时开启）
     RAW_CACHE_REPLAY = False
+
+    # 健康报告告警阈值：清洗保留率过低会提示
+    HEALTH_MIN_KEEP_RATIO = 0.5
     PAGE_SIZE = 20  # 每次请求条数
     MAX_PAGES = 30  # 最大翻页次数
     
