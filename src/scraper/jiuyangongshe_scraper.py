@@ -34,7 +34,6 @@ class JiuyangongsheScraper:
 
     WWW_BASE = "https://www.jiuyangongshe.com"
     API_BASE = "https://app.jiuyangongshe.com/jystock-app"
-    _TOKEN_SEED_PREFIX = "Uu0KfOB8iUP69d3c:"
 
     def __init__(self, config: Any):
         self.config = config
@@ -67,6 +66,27 @@ class JiuyangongsheScraper:
 
         self._session_token: Optional[str] = None
         self._user_info: Optional[Dict[str, Any]] = None
+        self._token_seed_prefix: str = self._load_token_seed_prefix()
+
+    def _load_token_seed_prefix(self) -> str:
+        """Load signing seed prefix for endpoints that require it.
+
+        This value is intentionally NOT hardcoded in repo to avoid leaking sensitive or proprietary details.
+        """
+        env_v = (os.getenv("JYGS_TOKEN_SEED_PREFIX") or "").strip()
+        if env_v:
+            return env_v
+        cfg_v = (getattr(self.config, "JYGS_TOKEN_SEED_PREFIX", "") or "").strip()
+        return cfg_v
+
+    def _require_token_seed_prefix(self) -> str:
+        v = (self._token_seed_prefix or "").strip()
+        if not v:
+            raise RuntimeError(
+                "Missing JYGS_TOKEN_SEED_PREFIX. Set it in config/local_settings.py or env JYGS_TOKEN_SEED_PREFIX "
+                "(required for some signed APIs like followed users)."
+            )
+        return v
 
     # -----------------------------
     # Public: action scraping
@@ -347,7 +367,8 @@ class JiuyangongsheScraper:
 
     def _signed_headers(self) -> Dict[str, str]:
         ts = int(time.time() * 1000)
-        raw = f"{self._TOKEN_SEED_PREFIX}{ts}"
+        seed_prefix = self._require_token_seed_prefix()
+        raw = f"{seed_prefix}{ts}"
         token = hashlib.md5(raw.encode("utf-8")).hexdigest()
         return {
             "timestamp": str(ts),

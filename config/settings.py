@@ -42,7 +42,7 @@ class Config:
     MAX_PAGES = 30  # 最大翻页次数
     
     # 输出配置
-    OUTPUT_FORMATS = ["markdown", "json"]
+    OUTPUT_FORMATS = ["markdown"]
     MARKDOWN_TEMPLATE = "default"
     JSON_INDENT = 2
     STATE_FILE = PROJECT_ROOT / "data" / "processed" / "crawl_state.json"
@@ -64,15 +64,19 @@ class Config:
     # 韭研公社（韭菜公社）登录（建议放到 config/local_settings.py 或环境变量）
     JYGS_PHONE = ""
     JYGS_PASSWORD = ""
+    # 韭研公社部分接口签名种子（建议放到 config/local_settings.py 或环境变量）
+    # 用于“关注的人”等需要签名的接口；不要提交真实值到仓库。
+    JYGS_TOKEN_SEED_PREFIX = ""
 
     # 飞书机器人（建议放到 config/local_settings.py）
     FEISHU_WEBHOOK = ""
     FEISHU_SECRET = ""
 
-    # api易（建议放到 config/local_settings.py）
-    APIYI_BASE_URL = "https://api.apiyi.com/v1/chat/completions"
-    APIYI_API_KEY = ""
-    APIYI_MODEL = "gpt-4o-mini"
+    # api易（已停用，如需启用请在 config/local_settings.py 配置）
+    # APIYI_BASE_URL = "https://api.apiyi.com/v1/chat/completions"
+    # APIYI_API_KEY = ""
+    # APIYI_MODEL = "gpt-4o-mini"
+
     
     @classmethod
     def ensure_directories(cls):
