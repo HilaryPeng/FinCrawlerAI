@@ -23,6 +23,49 @@ from utils.state import load_state, save_state
 from notifier.feishu import FeishuNotifier
 
 
+def build_run_warnings(config, report: dict) -> list[str]:
+    """基于运行结果生成可读的告警/风险提示（不影响程序流程）。"""
+    warnings: list[str] = []
+
+    # 全局错误
+    errors = report.get("errors") or []
+    if errors:
+        warnings.append(f"存在错误（{len(errors)}条），本次结果可能不完整")
+
+    # 各来源健康检查
+    for s in report.get("sources", []) or []:
+        name = s.get("name", "unknown")
+        status = s.get("status")
+        fetched = int(s.get("fetched", 0) or 0)
+        cleaned = int(s.get("cleaned", 0) or 0)
+        events = int(s.get("events", 0) or 0)
+
+        if status != "ok":
+            warnings.append(f"{name} 状态异常：{status}")
+            continue
+
+        if fetched <= 0:
+            warnings.append(f"{name} 抓取为 0，可能被反爬/网络异常/接口变更")
+            continue
+
+        if cleaned <= 0:
+            warnings.append(f"{name} 清洗后为 0，可能解析失败或过滤条件过严")
+            continue
+
+        # 清洗保留率过低
+        keep_ratio = cleaned / max(1, fetched)
+        if keep_ratio < float(getattr(config, "HEALTH_MIN_KEEP_RATIO", 0.5) or 0.5):
+            warnings.append(f"{name} 清洗保留率偏低：{cleaned}/{fetched}（{keep_ratio:.0%}）")
+
+        # 事件数异常：事件数远小于条目数（可能过度合并）或远大于条目数（不应发生）
+        if events > cleaned:
+            warnings.append(f"{name} 事件数 > 清洗条数（{events}>{cleaned}），可能统计异常")
+        elif cleaned >= 20 and events <= max(1, int(cleaned * 0.2)):
+            warnings.append(f"{name} 事件归并过强：事件{events}，条目{cleaned}")
+
+    return warnings
+
+
 def write_run_report(config, report: dict, filename_prefix: str = "run_report") -> dict:
     """写入运行健康报告（json + markdown），便于长期稳定运行监控。"""
     ts_label = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -34,6 +77,8 @@ def write_run_report(config, report: dict, filename_prefix: str = "run_report") 
 
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    warnings = build_run_warnings(config, report)
+
     lines = [
         "# 运行健康报告",
         "",
@@ -43,9 +88,24 @@ def write_run_report(config, report: dict, filename_prefix: str = "run_report") 
         f"- **状态**: {report.get('status', '')}",
         f"- **总耗时(秒)**: {report.get('elapsed_seconds', 0)}",
         "",
+    ]
+
+    if warnings:
+        lines.extend(
+            [
+                "## ⚠️ 风险提示",
+                "",
+                *[f"- {w}" for w in warnings],
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
         "## 来源明细",
         "",
-    ]
+        ]
+    )
     for s in report.get("sources", []):
         lines.append(f"### {s.get('name', 'unknown')}")
         lines.append(f"- **状态**: {s.get('status', '')}")
