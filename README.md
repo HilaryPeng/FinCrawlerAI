@@ -19,6 +19,10 @@
 - output：输出 Markdown
 - notifier：消息推送（飞书）
 
+## 设计文档
+
+- 日频市场观察系统 V1 设计：`docs/market_daily_system_design.md`
+
 ## 目录结构
 
 ```
