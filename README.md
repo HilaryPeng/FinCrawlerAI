@@ -75,6 +75,20 @@ python main.py cailian
 python main.py jygs --action-date 2026-01-26
 ```
 
+### 下载股票日线（关代理后运行）
+
+如果 AkShare 在代理环境下访问股票日线失败，可直接运行下面的脚本。脚本会在当前进程内清理常见代理环境变量，并全量下载股票日线到 SQLite。
+
+```bash
+python scripts/collect_quotes_only.py --date 2026-03-18
+```
+
+下载结果写入：
+
+```bash
+data/db/market_daily.db
+```
+
 ## 数据与输出
 
 输出目录：`data/processed`

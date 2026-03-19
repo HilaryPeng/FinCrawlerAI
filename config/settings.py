@@ -68,6 +68,10 @@ class Config:
     LOG_LEVEL = "INFO"
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
+    # 数据库配置
+    DB_DIR = DATA_DIR / "db"
+    MARKET_DAILY_DB = DB_DIR / "market_daily.db"
+    
     # 调度配置
     ENABLE_SCHEDULED_RUNS = False
     SCHEDULE_INTERVAL = 3600  # 定时运行间隔（秒）
@@ -92,7 +96,7 @@ class Config:
     @classmethod
     def ensure_directories(cls):
         """确保所有必要的目录存在"""
-        for directory in [cls.DATA_DIR, cls.RAW_DATA_DIR, cls.PROCESSED_DATA_DIR, cls.LOGS_DIR]:
+        for directory in [cls.DATA_DIR, cls.RAW_DATA_DIR, cls.PROCESSED_DATA_DIR, cls.LOGS_DIR, cls.DB_DIR]:
             directory.mkdir(parents=True, exist_ok=True)
 
 
