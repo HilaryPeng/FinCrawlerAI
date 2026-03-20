@@ -89,6 +89,29 @@ python scripts/collect_quotes_only.py --date 2026-03-18
 data/db/market_daily.db
 ```
 
+### 入库财联社 / 韭菜公社新闻
+
+将财联社快讯和韭菜公社异动解析写入 `market_daily.db`，供 `daily_board_features` / `daily_stock_features` 聚合使用：
+
+```bash
+# 同时抓财联社与韭菜公社
+python scripts/collect_market_news.py --date 2026-03-19
+
+# 只抓韭菜公社涨停/异动解析
+python scripts/collect_market_news.py --date 2026-03-19 --sources jygs
+```
+
+说明：
+
+- 韭菜公社会直接写入结构化 `symbols/themes`
+- `daily_stock_features` 会聚合 `jygs_news_count` 与 JYGS 信号摘要
+- `daily_board_features` 会把行业板块内被新闻提及的成员股计入新闻热度
+- 也可以直接并入市场采集主流程：
+
+```bash
+python scripts/collect_market_data.py --date 2026-03-19 --with-news
+```
+
 ### 生成日报并部署到服务器
 
 先生成日报页面：

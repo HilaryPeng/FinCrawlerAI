@@ -20,9 +20,16 @@ from src.market.collectors import (
     LimitUpCollector,
     MarketBreadthCollector,
 )
+from src.market.quality import DataQualityChecker
+from collect_market_news import collect_market_news
 
 
-def collect_market_data(trade_date: str, db_path: Path = None) -> dict:
+def collect_market_data(
+    trade_date: str,
+    db_path: Path = None,
+    with_news: bool = False,
+    news_sources: set[str] | None = None,
+) -> dict:
     """
     Collect all market data for a given trade date.
     
@@ -47,6 +54,7 @@ def collect_market_data(trade_date: str, db_path: Path = None) -> dict:
         "boards": 0,
         "limit_ups": 0,
         "market_breadth": 0,
+        "news_total": 0,
     }
     
     print(f"\n{'='*50}", flush=True)
@@ -74,6 +82,11 @@ def collect_market_data(trade_date: str, db_path: Path = None) -> dict:
     breadth_collector = MarketBreadthCollector(db)
     breadth_count = breadth_collector.collect(trade_date)
     results["market_breadth"] = breadth_count
+
+    if with_news:
+        print("[news] Collecting Cailian / JYGS news...", flush=True)
+        news_results = collect_market_news(trade_date, news_sources or {"cailian", "jygs"})
+        results["news_total"] = news_results["counts"]["total"]
     
     print(f"\n{'='*50}", flush=True)
     print(f"Collection Summary for {trade_date}", flush=True)
@@ -82,6 +95,17 @@ def collect_market_data(trade_date: str, db_path: Path = None) -> dict:
     print(f"  Boards:         {results['boards']}", flush=True)
     print(f"  Limit Ups:      {results['limit_ups']}", flush=True)
     print(f"  Market Breadth: {results['market_breadth']}", flush=True)
+    if with_news:
+        print(f"  News Total:     {results['news_total']}", flush=True)
+    quality = DataQualityChecker(db).check(trade_date)
+    results["quality_status"] = quality["status"]
+    print(
+        "  Quality:        "
+        f"{quality['status']} "
+        f"(quotes={quality['quote_count']}/{quality['required_quotes']}, "
+        f"boards={quality['board_count']}, breadth={quality['breadth_count']})",
+        flush=True,
+    )
     print(f"{'='*50}\n", flush=True)
     
     return results
@@ -101,6 +125,17 @@ def main():
         default=None,
         help="Database path override",
     )
+    parser.add_argument(
+        "--with-news",
+        action="store_true",
+        help="Also collect Cailian and Jiuyangongshe news into market_daily.db",
+    )
+    parser.add_argument(
+        "--news-sources",
+        type=str,
+        default="cailian,jygs",
+        help="Comma-separated news sources for --with-news: cailian,jygs",
+    )
     args = parser.parse_args()
     
     if args.date:
@@ -110,9 +145,15 @@ def main():
     
     db_path = Path(args.db_path) if args.db_path else None
     
-    results = collect_market_data(trade_date, db_path)
+    news_sources = {item.strip() for item in args.news_sources.split(",") if item.strip()}
+    results = collect_market_data(
+        trade_date,
+        db_path,
+        with_news=args.with_news,
+        news_sources=news_sources,
+    )
     
-    total = sum(v for k, v in results.items() if k != "trade_date")
+    total = sum(v for v in results.values() if isinstance(v, (int, float)))
     if total > 0:
         print(f"Successfully collected {total} records", flush=True)
         return 0

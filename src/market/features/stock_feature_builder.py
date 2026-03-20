@@ -45,7 +45,8 @@ class StockFeatureBuilder:
                 l.limit_up_streak,
                 m.board_name AS primary_board_name,
                 m.board_type AS primary_board_type,
-                bf.board_score AS board_score_ref
+                bf.board_score AS board_score_ref,
+                bf.phase_hint AS board_phase_hint
             FROM daily_stock_quotes q
             LEFT JOIN daily_stock_limits l
               ON q.trade_date = l.trade_date
@@ -98,6 +99,7 @@ class StockFeatureBuilder:
         symbol = row["symbol"]
         board_name = row.get("primary_board_name")
         board_type = row.get("primary_board_type")
+        board_phase_hint = row.get("board_phase_hint")
         pct_chg = self._to_float(row.get("pct_chg")) or 0.0
         amount = self._to_float(row.get("amount")) or 0.0
         turnover = self._to_float(row.get("turnover")) or 0.0
@@ -121,6 +123,8 @@ class StockFeatureBuilder:
             limit_up_streak=limit_up_streak,
             board_score_ref=board_score_ref,
             news_heat_score=news_metrics["news_heat_score"],
+            jygs_signal_score=news_metrics["jygs_signal_score"],
+            board_phase_hint=board_phase_hint,
         )
         center_score = self._compute_center_score(
             pct_chg=pct_chg,
@@ -128,12 +132,19 @@ class StockFeatureBuilder:
             total_mv=total_mv,
             board_score_ref=board_score_ref,
             news_heat_score=news_metrics["news_heat_score"],
+            jygs_signal_score=news_metrics["jygs_signal_score"],
+            board_phase_hint=board_phase_hint,
+            amount_rank_in_board=amount_rank_in_board,
+            pct_chg_3d=pct_chg_3d,
         )
         follow_score = self._compute_follow_score(
             pct_chg=pct_chg,
             board_score_ref=board_score_ref,
             days_in_limit_up_last_20=days_in_limit_up_last_20,
             pct_chg_3d=pct_chg_3d,
+            board_phase_hint=board_phase_hint,
+            limit_up=limit_up,
+            jygs_signal_score=news_metrics["jygs_signal_score"],
         )
         risk_flags = self._build_risk_flags(
             pct_chg=pct_chg,
@@ -141,12 +152,20 @@ class StockFeatureBuilder:
             amplitude=amplitude,
             limit_up_streak=limit_up_streak,
             board_score_ref=board_score_ref,
+            board_phase_hint=board_phase_hint,
         )
         risk_score = self._compute_risk_score(risk_flags)
         role_tag = self._pick_role_tag(
             dragon_score=dragon_score,
             center_score=center_score,
             follow_score=follow_score,
+            limit_up=limit_up,
+            limit_up_streak=limit_up_streak,
+            board_phase_hint=board_phase_hint,
+            amount=amount,
+            amount_rank_in_board=amount_rank_in_board,
+            pct_chg_3d=pct_chg_3d,
+            risk_flags=risk_flags,
         )
         final_score = self._compute_final_score(
             role_tag=role_tag,
@@ -165,6 +184,11 @@ class StockFeatureBuilder:
                 "amount_rank_in_board": amount_rank_in_board,
                 "close": self._to_float(row.get("close")),
                 "days_in_limit_up_last_20": days_in_limit_up_last_20,
+                "board_phase_hint": board_phase_hint,
+                "jygs_signal_score": news_metrics["jygs_signal_score"],
+                "jygs_signal_flags": news_metrics["jygs_signal_flags"],
+                "jygs_reason_summary": news_metrics["jygs_reason_summary"],
+                "jygs_theme_names": news_metrics["jygs_theme_names"],
             },
             ensure_ascii=False,
         )
@@ -272,16 +296,108 @@ class StockFeatureBuilder:
                 "cls_news_count": 0,
                 "jygs_news_count": 0,
                 "news_heat_score": 0.0,
+                "jygs_signal_score": 0.0,
+                "jygs_signal_flags": [],
+                "jygs_reason_summary": "",
+                "jygs_theme_names": [],
             }
         news_count = int(row["news_count"] or 0)
         cls_news_count = int(row["cls_news_count"] or 0)
         jygs_news_count = int(row["jygs_news_count"] or 0)
         news_heat_score = min(news_count * 12 + cls_news_count * 6 + jygs_news_count * 8, 100.0)
+        jygs_detail = self._get_jygs_signal_details(trade_date, symbol)
         return {
             "news_count": news_count,
             "cls_news_count": cls_news_count,
             "jygs_news_count": jygs_news_count,
             "news_heat_score": round(news_heat_score, 2),
+            "jygs_signal_score": jygs_detail["signal_score"],
+            "jygs_signal_flags": jygs_detail["signal_flags"],
+            "jygs_reason_summary": jygs_detail["reason_summary"],
+            "jygs_theme_names": jygs_detail["theme_names"],
+        }
+
+    def _get_jygs_signal_details(self, trade_date: str, symbol: str) -> Dict[str, Any]:
+        start_ts, end_ts = self._day_ts_range(trade_date)
+        rows = self.db.fetchall(
+            """
+            SELECT
+                ni.title,
+                ni.content,
+                ni.raw_json
+            FROM news_items ni
+            JOIN news_item_symbols nis
+              ON ni.id = nis.news_id
+            WHERE ni.publish_ts >= ?
+              AND ni.publish_ts < ?
+              AND ni.source = 'jygs'
+              AND nis.symbol = ?
+            ORDER BY ni.publish_ts DESC, ni.id DESC
+            LIMIT 10
+            """,
+            (start_ts, end_ts, symbol),
+        )
+        if not rows:
+            return {
+                "signal_score": 0.0,
+                "signal_flags": [],
+                "reason_summary": "",
+                "theme_names": [],
+            }
+
+        signal_flags = set()
+        theme_names = []
+        reasons = []
+        signal_score = 0.0
+
+        for row in rows:
+            title = row["title"] or ""
+            content = row["content"] or ""
+            raw_json = row["raw_json"] or ""
+            signal_score += 8.0
+
+            parsed = {}
+            try:
+                parsed = json.loads(raw_json) if raw_json else {}
+            except Exception:
+                parsed = {}
+
+            field_name = (parsed.get("field_name") or "").strip()
+            action_num = (parsed.get("action_num") or "").strip()
+            expound = (parsed.get("expound") or "").strip()
+            parsed_flags = parsed.get("signal_flags") if isinstance(parsed.get("signal_flags"), list) else []
+
+            if field_name:
+                theme_names.append(field_name)
+            if expound:
+                reasons.append(expound)
+            elif content:
+                parts = [line.strip() for line in content.splitlines() if line.strip()]
+                if parts:
+                    reasons.append(parts[-1])
+
+            for flag in parsed_flags:
+                signal_flags.add(str(flag))
+
+            joined_text = " ".join([title, content, action_num, expound])
+            if any(keyword in joined_text for keyword in ["龙头", "核心", "总龙", "辨识度"]):
+                signal_flags.add("core_signal")
+                signal_score += 10.0
+            if any(keyword in joined_text for keyword in ["补涨", "跟涨", "扩散", "分支", "跟风"]):
+                signal_flags.add("follow_signal")
+                signal_score += 6.0
+            if any(keyword in joined_text for keyword in ["首板", "2板", "3板", "4板", "5板", "连板", "反包"]):
+                signal_flags.add("streak_signal")
+                signal_score += 8.0
+            if any(keyword in joined_text for keyword in ["高位", "炸板", "回落", "兑现", "博弈", "分歧"]):
+                signal_flags.add("risk_signal")
+
+        reason_summary = "；".join(dict.fromkeys(reason for reason in reasons if reason))[:300]
+        return {
+            "signal_score": round(min(signal_score, 100.0), 2),
+            "signal_flags": sorted(signal_flags),
+            "reason_summary": reason_summary,
+            "theme_names": list(dict.fromkeys(theme_names)),
         }
 
     def _get_window_return(self, trade_date: str, symbol: str, window: int) -> float | None:
@@ -311,12 +427,21 @@ class StockFeatureBuilder:
         limit_up_streak: int,
         board_score_ref: float,
         news_heat_score: float,
+        jygs_signal_score: float,
+        board_phase_hint: str | None,
     ) -> float:
         score = max(pct_chg * 4, 0.0)
         score += limit_up * 25
         score += limit_up_streak * 15
         score += board_score_ref * 0.25
         score += news_heat_score * 0.1
+        score += jygs_signal_score * 0.12
+        if board_phase_hint == "fade":
+            score *= 0.55
+        elif board_phase_hint == "start":
+            score *= 1.08
+        elif board_phase_hint == "accelerate":
+            score *= 1.12
         return round(min(score, 100.0), 2)
 
     def _compute_center_score(
@@ -326,6 +451,10 @@ class StockFeatureBuilder:
         total_mv: float,
         board_score_ref: float,
         news_heat_score: float,
+        jygs_signal_score: float,
+        board_phase_hint: str | None,
+        amount_rank_in_board: int,
+        pct_chg_3d: float | None,
     ) -> float:
         amount_score = min(amount / 2_000_000_000, 45.0)
         mv_score = 0.0
@@ -333,7 +462,22 @@ class StockFeatureBuilder:
             mv_score = 25.0
         elif total_mv > 500_000_000_000:
             mv_score = 18.0
-        score = amount_score + mv_score + max(pct_chg * 2, 0.0) + board_score_ref * 0.2 + news_heat_score * 0.05
+        rank_bonus = 12.0 if 0 < amount_rank_in_board <= 3 else 6.0 if 0 < amount_rank_in_board <= 8 else 0.0
+        trend_bonus = max((pct_chg_3d or 0.0) * 1.2, 0.0)
+        score = (
+            amount_score
+            + mv_score
+            + rank_bonus
+            + max(pct_chg * 2, 0.0)
+            + trend_bonus
+            + board_score_ref * 0.15
+            + news_heat_score * 0.05
+            + jygs_signal_score * 0.04
+        )
+        if board_phase_hint == "fade":
+            score *= 0.72
+        elif board_phase_hint == "start":
+            score *= 1.05
         return round(min(score, 100.0), 2)
 
     def _compute_follow_score(
@@ -342,10 +486,27 @@ class StockFeatureBuilder:
         board_score_ref: float,
         days_in_limit_up_last_20: int,
         pct_chg_3d: float | None,
+        board_phase_hint: str | None,
+        limit_up: int,
+        jygs_signal_score: float,
     ) -> float:
         recent_momentum = pct_chg_3d or 0.0
         freshness_bonus = max(12 - days_in_limit_up_last_20 * 2, 0.0)
-        score = max(pct_chg * 3, 0.0) + board_score_ref * 0.3 + max(recent_momentum * 1.5, 0.0) + freshness_bonus
+        score = (
+            max(pct_chg * 3, 0.0)
+            + board_score_ref * 0.22
+            + max(recent_momentum * 1.5, 0.0)
+            + freshness_bonus
+            + jygs_signal_score * 0.08
+        )
+        if limit_up:
+            score += 8
+        if board_phase_hint == "fade":
+            score *= 0.58
+        elif board_phase_hint == "start":
+            score *= 1.08
+        elif board_phase_hint == "accelerate":
+            score *= 1.12
         return round(min(score, 100.0), 2)
 
     def _build_risk_flags(
@@ -355,6 +516,7 @@ class StockFeatureBuilder:
         amplitude: float,
         limit_up_streak: int,
         board_score_ref: float,
+        board_phase_hint: str | None,
     ) -> List[str]:
         flags: List[str] = []
         if limit_up_streak >= 3:
@@ -367,6 +529,8 @@ class StockFeatureBuilder:
             flags.append("isolated_spike")
         if pct_chg <= -5:
             flags.append("weak_close")
+        if board_phase_hint == "fade" and pct_chg > 0:
+            flags.append("fading_board")
         return flags
 
     def _compute_risk_score(self, risk_flags: List[str]) -> float:
@@ -376,6 +540,7 @@ class StockFeatureBuilder:
             "high_amplitude": 10.0,
             "isolated_spike": 15.0,
             "weak_close": 10.0,
+            "fading_board": 12.0,
         }
         score = sum(weights.get(flag, 0.0) for flag in risk_flags)
         return round(min(score, 100.0), 2)
@@ -385,12 +550,42 @@ class StockFeatureBuilder:
         dragon_score: float,
         center_score: float,
         follow_score: float,
+        limit_up: int,
+        limit_up_streak: int,
+        board_phase_hint: str | None,
+        amount: float,
+        amount_rank_in_board: int,
+        pct_chg_3d: float | None,
+        risk_flags: List[str],
     ) -> str:
-        scores = {
-            "dragon": dragon_score,
-            "center": center_score,
-            "follow": follow_score,
-        }
+        dragon_allowed = (
+            (limit_up == 1 or limit_up_streak >= 1)
+            and board_phase_hint in {"start", "expand", "accelerate"}
+            and "fading_board" not in risk_flags
+        )
+        center_allowed = (
+            amount >= 2_000_000_000
+            and amount_rank_in_board > 0
+            and amount_rank_in_board <= 8
+            and (pct_chg_3d or 0.0) > 0
+            and board_phase_hint in {"start", "expand", "accelerate"}
+        )
+        follow_allowed = (
+            board_phase_hint in {"start", "expand", "accelerate"}
+            and ((pct_chg_3d or 0.0) > 0 or pct_chg_3d is None)
+            and "fading_board" not in risk_flags
+        )
+
+        scores = {}
+        if dragon_allowed:
+            scores["dragon"] = dragon_score
+        if center_allowed:
+            scores["center"] = center_score
+        if follow_allowed:
+            scores["follow"] = follow_score
+
+        if not scores:
+            return "watchlist"
         role_tag = max(scores, key=scores.get)
         if scores[role_tag] < 20:
             return "watchlist"

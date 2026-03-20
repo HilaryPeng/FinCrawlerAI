@@ -82,6 +82,7 @@ class BoardFeatureBuilder:
         news_metrics = self._get_board_news_metrics(
             trade_date=trade_date,
             board_name=board_name,
+            board_type=board_type,
         )
         continuity_score = self._compute_continuity_score(
             trade_date=trade_date,
@@ -218,7 +219,42 @@ class BoardFeatureBuilder:
             "top_amount": round(max(amounts) if amounts else 0.0, 2),
         }
 
-    def _get_board_news_metrics(self, trade_date: str, board_name: str) -> Dict[str, Any]:
+    def _get_board_news_metrics(self, trade_date: str, board_name: str, board_type: str | None) -> Dict[str, Any]:
+        if board_type == "industry_csrc":
+            return self._get_industry_board_news_metrics(trade_date, board_name)
+        return self._get_theme_board_news_metrics(trade_date, board_name)
+
+    def _get_industry_board_news_metrics(self, trade_date: str, board_name: str) -> Dict[str, Any]:
+        start_ts, end_ts = self._day_ts_range(trade_date)
+        row = self.db.fetchone(
+            """
+            SELECT
+                COUNT(DISTINCT ni.id) AS news_count,
+                COUNT(DISTINCT nis.symbol) AS core_symbol_count,
+                COUNT(DISTINCT CASE WHEN ni.source = 'jygs' THEN ni.id END) AS jygs_news_count
+            FROM stock_board_membership m
+            JOIN news_item_symbols nis
+              ON m.symbol = nis.symbol
+            JOIN news_items ni
+              ON nis.news_id = ni.id
+            WHERE m.trade_date = ?
+              AND m.board_name = ?
+              AND m.board_type = 'industry_csrc'
+              AND ni.publish_ts >= ?
+              AND ni.publish_ts < ?
+            """,
+            (trade_date, board_name, start_ts, end_ts),
+        )
+        news_count = int(row["news_count"]) if row and row["news_count"] is not None else 0
+        core_symbol_count = int(row["core_symbol_count"]) if row and row["core_symbol_count"] is not None else 0
+        jygs_news_count = int(row["jygs_news_count"]) if row and row["jygs_news_count"] is not None else 0
+        news_heat_score = min(news_count * 6.0 + core_symbol_count * 8.0 + jygs_news_count * 6.0, 100.0)
+        return {
+            "news_count": news_count,
+            "news_heat_score": round(news_heat_score, 2),
+        }
+
+    def _get_theme_board_news_metrics(self, trade_date: str, board_name: str) -> Dict[str, Any]:
         start_ts, end_ts = self._day_ts_range(trade_date)
         row = self.db.fetchone(
             """
@@ -306,6 +342,7 @@ class BoardFeatureBuilder:
         continuity_score: float,
         news_heat_score: float,
     ) -> float:
+        pct_value = pct_chg or 0.0
         pct_strength = max(min((pct_chg or 0.0) * 10, 100.0), -30.0)
         limit_strength = min(limit_up_count * 8, 100.0)
         board_score = (
@@ -317,6 +354,12 @@ class BoardFeatureBuilder:
             + 0.10 * center_strength
             + 0.05 * continuity_score
         )
+        if pct_value < 0:
+            board_score *= 0.72
+        if pct_value <= -1.5:
+            board_score *= 0.78
+        if limit_up_count <= 1 and pct_value < 0:
+            board_score *= 0.85
         return round(board_score, 2)
 
     def _infer_phase_hint(
@@ -327,10 +370,18 @@ class BoardFeatureBuilder:
         continuity_score: float,
     ) -> str:
         pct_chg = pct_chg or 0.0
+        if pct_chg < 0 and limit_up_count <= 1:
+            return "fade"
+        if pct_chg < 0 and continuity_score < 20:
+            return "fade"
         if board_score >= 70 and limit_up_count >= 3 and continuity_score >= 20:
             return "accelerate"
+        if board_score >= 45 and limit_up_count >= 2 and pct_chg >= 0:
+            return "expand"
         if board_score >= 55 and pct_chg > 1.0:
             return "expand"
+        if board_score >= 28 and limit_up_count >= 2 and pct_chg >= 0:
+            return "start"
         if board_score >= 35 and pct_chg > 0:
             return "start"
         return "fade"

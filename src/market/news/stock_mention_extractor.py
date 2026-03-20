@@ -94,3 +94,7 @@ class StockMentionExtractor:
                     })
         
         return results
+
+    def normalize(self, code: str) -> str:
+        """Normalize a stock code to the project's symbol format."""
+        return normalize_symbol(code)

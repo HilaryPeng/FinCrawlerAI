@@ -18,6 +18,8 @@ from .stock_ranker import StockRanker
 class ObservationPoolSelector:
     """Select the daily observation pool from ranked features."""
 
+    MAX_PER_BOARD = 6
+    MAX_PER_BOARD_ROLE = 2
     ROLE_TARGETS = {
         "dragon": 6,
         "center": 6,
@@ -40,6 +42,11 @@ class ObservationPoolSelector:
             print(f"No stock features found for {trade_date}", flush=True)
             return 0
 
+        self.db.execute(
+            "DELETE FROM daily_observation_pool WHERE trade_date = ?",
+            (trade_date,),
+        )
+
         board_rank_map = {
             (row["board_name"], row["board_type"]): row
             for row in board_rows
@@ -51,6 +58,8 @@ class ObservationPoolSelector:
 
         selected: List[Dict[str, Any]] = []
         selected_symbols: Set[str] = set()
+        board_counts: Dict[Tuple[str | None, str | None], int] = {}
+        board_role_counts: Dict[Tuple[str | None, str | None, str], int] = {}
 
         for role_tag, target in self.ROLE_TARGETS.items():
             candidates = self._role_candidates(
@@ -61,7 +70,10 @@ class ObservationPoolSelector:
             taken = 0
             for candidate in candidates:
                 symbol = candidate["symbol"]
+                board_key = (candidate.get("primary_board_name"), candidate.get("primary_board_type"))
                 if symbol in selected_symbols:
+                    continue
+                if not self._can_select(board_key, role_tag, board_counts, board_role_counts):
                     continue
                 selected.append(
                     self._build_pool_record(
@@ -72,6 +84,9 @@ class ObservationPoolSelector:
                     )
                 )
                 selected_symbols.add(symbol)
+                board_counts[board_key] = board_counts.get(board_key, 0) + 1
+                role_key = (board_key[0], board_key[1], role_tag)
+                board_role_counts[role_key] = board_role_counts.get(role_key, 0) + 1
                 taken += 1
                 if taken >= target:
                     break
@@ -79,7 +94,10 @@ class ObservationPoolSelector:
         if len(selected) < 20:
             for candidate in stock_rows:
                 symbol = candidate["symbol"]
+                board_key = (candidate.get("primary_board_name"), candidate.get("primary_board_type"))
                 if symbol in selected_symbols:
+                    continue
+                if not self._can_select(board_key, candidate.get("role_tag"), board_counts, board_role_counts):
                     continue
                 selected.append(
                     self._build_pool_record(
@@ -90,6 +108,9 @@ class ObservationPoolSelector:
                     )
                 )
                 selected_symbols.add(symbol)
+                board_counts[board_key] = board_counts.get(board_key, 0) + 1
+                role_key = (board_key[0], board_key[1], candidate.get("role_tag"))
+                board_role_counts[role_key] = board_role_counts.get(role_key, 0) + 1
                 if len(selected) >= 20:
                     break
 
@@ -136,6 +157,24 @@ class ObservationPoolSelector:
         if candidates:
             return candidates
         return [row for row in stock_rows if row.get("role_tag") == role_tag]
+
+    def _can_select(
+        self,
+        board_key: Tuple[str | None, str | None],
+        role_tag: str | None,
+        board_counts: Dict[Tuple[str | None, str | None], int],
+        board_role_counts: Dict[Tuple[str | None, str | None, str], int],
+    ) -> bool:
+        if board_key[0] is None:
+            return True
+        if board_counts.get(board_key, 0) >= self.MAX_PER_BOARD:
+            return False
+        if role_tag is None:
+            return True
+        role_key = (board_key[0], board_key[1], role_tag)
+        if board_role_counts.get(role_key, 0) >= self.MAX_PER_BOARD_ROLE:
+            return False
+        return True
 
     def _build_pool_record(
         self,
@@ -196,6 +235,23 @@ class ObservationPoolSelector:
             parts.append(f"板块分={round(float(board_score), 2)}")
         if phase_hint:
             parts.append(f"阶段={phase_hint}")
+        feature_json = stock_row.get("feature_json")
+        if feature_json:
+            try:
+                feature_data = json.loads(feature_json)
+            except Exception:
+                feature_data = {}
+            jygs_themes = feature_data.get("jygs_theme_names") or []
+            jygs_reason = feature_data.get("jygs_reason_summary") or ""
+            jygs_signal_flags = feature_data.get("jygs_signal_flags") or []
+            if jygs_themes:
+                parts.append(f"韭菜公社题材={','.join(jygs_themes[:3])}")
+            if "core_signal" in jygs_signal_flags:
+                parts.append("韭菜公社=核心信号")
+            elif "follow_signal" in jygs_signal_flags:
+                parts.append("韭菜公社=扩散信号")
+            if jygs_reason:
+                parts.append(f"异动逻辑={jygs_reason[:60]}")
         parts.append(f"总分={stock_row.get('final_score')}")
         return "；".join(parts)
 
@@ -214,6 +270,17 @@ class ObservationPoolSelector:
             points.append("留意加速后分歧风险")
         elif phase_hint == "fade":
             points.append("留意板块热度回落")
+        feature_json = stock_row.get("feature_json")
+        if feature_json:
+            try:
+                feature_data = json.loads(feature_json)
+            except Exception:
+                feature_data = {}
+            jygs_signal_flags = feature_data.get("jygs_signal_flags") or []
+            if "core_signal" in jygs_signal_flags:
+                points.append("结合韭菜公社核心信号看承接强度")
+            if "risk_signal" in jygs_signal_flags:
+                points.append("韭菜公社提示博弈/分歧风险")
         return "；".join(points)
 
     def _role_summary(self, records: List[Dict[str, Any]]) -> str:

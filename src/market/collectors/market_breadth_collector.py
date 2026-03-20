@@ -137,23 +137,34 @@ class MarketBreadthCollector:
                 (trade_date,),
             )
             if rows:
-                pct_values = pd.to_numeric(
-                    [row["pct_chg"] for row in rows],
-                    errors="coerce",
+                pct_values = pd.Series(
+                    pd.to_numeric(
+                        [row["pct_chg"] for row in rows],
+                        errors="coerce",
+                    )
                 )
-                amount_values = pd.to_numeric(
-                    [row["amount"] for row in rows],
-                    errors="coerce",
+                amount_values = pd.Series(
+                    pd.to_numeric(
+                        [row["amount"] for row in rows],
+                        errors="coerce",
+                    )
                 )
+                valid_pct = pct_values.dropna()
+                valid_amount = amount_values.dropna()
                 record["up_count"] = int((pct_values > 0).sum())
                 record["down_count"] = int((pct_values < 0).sum())
-                record["total_amount"] = float(amount_values.fillna(0).sum())
+                record["total_amount"] = float(valid_amount.sum()) if not valid_amount.empty else None
+                print(
+                    f"Market summary rows={len(rows)} valid_pct={len(valid_pct)} "
+                    f"valid_amount={len(valid_amount)} total_amount={record['total_amount']}",
+                    flush=True,
+                )
                 return
         except Exception as e:
             print(f"Failed to fetch market summary from daily_stock_quotes: {e}", flush=True)
 
         print(
-            "Warning: daily_stock_quotes is empty for "
+            "Warning: daily_stock_quotes summary unavailable for "
             f"{trade_date}; market breadth summary fields remain null",
             flush=True,
         )
@@ -161,7 +172,31 @@ class MarketBreadthCollector:
     def _fetch_limit_stats(self, record: Dict[str, Any], trade_date: str):
         """Fetch limit up/down statistics for the given trade date."""
         date_str = trade_date.replace("-", "")
-        
+
+        local_row = self.db.fetchone(
+            """
+            SELECT
+                COUNT(*) AS limit_up_count,
+                SUM(COALESCE(broken_limit, 0)) AS broken_limit_count,
+                MAX(COALESCE(limit_up_streak, 0)) AS highest_streak
+            FROM daily_stock_limits
+            WHERE trade_date = ?
+            """,
+            (trade_date,),
+        )
+        if local_row and int(local_row["limit_up_count"] or 0) > 0:
+            record["limit_up_count"] = int(local_row["limit_up_count"] or 0)
+            record["broken_limit_count"] = int(local_row["broken_limit_count"] or 0)
+            max_streak = int(local_row["highest_streak"] or 0)
+            record["highest_streak"] = max_streak if max_streak > 0 else None
+            print(
+                "Limit stats loaded from daily_stock_limits: "
+                f"limit_up={record['limit_up_count']} broken_limit={record['broken_limit_count']} "
+                f"highest_streak={record['highest_streak']}",
+                flush=True,
+            )
+            return
+
         try:
             df = ak.stock_zt_pool_em(date=date_str)
             if df is not None and not df.empty:

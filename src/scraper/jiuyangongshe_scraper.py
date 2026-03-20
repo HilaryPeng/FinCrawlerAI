@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from utils.http_client import HttpClient
+from src.utils.symbols import normalize_symbol
 
 
 @dataclass
@@ -331,7 +332,42 @@ class JiuyangongsheScraper:
             return None
 
         tags = [t for t in ["异动解析", field_name, stock_name, stock_code] if t]
+        normalized_symbol = normalize_symbol(stock_code) if stock_code else ""
+        signal_flags = []
+        if num:
+            if "板" in num:
+                signal_flags.append("limit_shape")
+            if any(keyword in num for keyword in ["连板", "首板", "2板", "3板", "4板", "5板", "6板"]):
+                signal_flags.append("streak_signal")
+        if expound:
+            if any(keyword in expound for keyword in ["龙头", "核心", "总龙", "辨识度"]):
+                signal_flags.append("core_signal")
+            if any(keyword in expound for keyword in ["补涨", "跟涨", "跟风", "扩散", "分支"]):
+                signal_flags.append("follow_signal")
+            if any(keyword in expound for keyword in ["高位", "分歧", "炸板", "回落", "兑现", "博弈"]):
+                signal_flags.append("risk_signal")
+
+        explicit_symbols = []
+        if normalized_symbol:
+            explicit_symbols.append(
+                {
+                    "symbol": normalized_symbol,
+                    "name": stock_name or stock_code,
+                    "relation_type": "primary",
+                }
+            )
+
+        explicit_themes = []
+        if field_name:
+            explicit_themes.append(
+                {
+                    "name": field_name,
+                    "type": "concept",
+                }
+            )
+
         return {
+            "source_uid": article_id or f"{date}:{field_name}:{stock_code}:{title}",
             "title": title,
             "content": content,
             "publish_time": publish_time,
@@ -339,6 +375,14 @@ class JiuyangongsheScraper:
             "source": "韭研公社",
             "url": url,
             "tags": tags,
+            "symbols": explicit_symbols,
+            "themes": explicit_themes,
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+            "field_name": field_name,
+            "action_num": num,
+            "expound": expound,
+            "signal_flags": signal_flags,
         }
 
     def _resolve_publish_time(self, date: str, time_str: str, fallback: str) -> Tuple[str, int]:

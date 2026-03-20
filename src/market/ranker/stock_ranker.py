@@ -30,7 +30,8 @@ class StockRanker:
                 risk_score,
                 final_score,
                 board_score_ref,
-                risk_flags
+                risk_flags,
+                feature_json
             FROM daily_stock_features
             WHERE trade_date = ?
             ORDER BY final_score DESC, symbol ASC
