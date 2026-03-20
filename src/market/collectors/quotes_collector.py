@@ -4,10 +4,12 @@ Stock daily quotes collector using AkShare.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Callable, Optional
 import pandas as pd
 import akshare as ak
+import requests
 
 from src.db import DatabaseConnection, DailyStockQuotesRepository
 from src.utils.symbols import normalize_symbol
@@ -18,6 +20,7 @@ class QuotesCollector:
 
     PROGRESS_EVERY = 50
     UPSERT_BATCH_SIZE = 100
+    REQUEST_TIMEOUT_SECONDS = 20
     
     def __init__(self, db: DatabaseConnection):
         self.db = db
@@ -188,12 +191,13 @@ class QuotesCollector:
         end_date = trade_date.replace("-", "")
 
         try:
-            df = ak.stock_zh_a_daily(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                adjust="",
-            )
+            with self._requests_timeout():
+                df = ak.stock_zh_a_daily(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="",
+                )
             if df is not None and not df.empty:
                 df = df.copy()
                 df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -204,12 +208,13 @@ class QuotesCollector:
             pass
 
         try:
-            df = ak.stock_zh_a_hist_tx(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                adjust="",
-            )
+            with self._requests_timeout():
+                df = ak.stock_zh_a_hist_tx(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="",
+                )
             if df is not None and not df.empty:
                 df = df.copy()
                 df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -220,6 +225,21 @@ class QuotesCollector:
             pass
 
         return None
+
+    @contextmanager
+    def _requests_timeout(self):
+        """Temporarily set a default timeout for third-party AkShare requests."""
+        original_get = requests.get
+
+        def timeout_get(*args, **kwargs):
+            kwargs.setdefault("timeout", self.REQUEST_TIMEOUT_SECONDS)
+            return original_get(*args, **kwargs)
+
+        requests.get = timeout_get
+        try:
+            yield
+        finally:
+            requests.get = original_get
 
     def _get_all_stocks(self) -> List[Dict[str, str]]:
         """Get A-share stock universe with code and name."""
