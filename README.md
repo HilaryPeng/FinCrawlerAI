@@ -89,6 +89,42 @@ python scripts/collect_quotes_only.py --date 2026-03-18
 data/db/market_daily.db
 ```
 
+### 生成日报并部署到服务器
+
+先生成日报页面：
+
+```bash
+python scripts/generate_market_daily_report.py --date 2026-03-18
+```
+
+如果服务器已安装并启用 `nginx`，可直接生成并部署 HTML 到远端 Web 目录：
+
+```bash
+python scripts/deploy_market_daily_report.py \
+  --date 2026-03-18 \
+  --host 167.179.78.250 \
+  --user root \
+  --publish-index
+```
+
+说明：
+
+- 脚本默认通过 `ssh/scp` 部署到远端
+- 默认暂存目录：`/root/market_daily`
+- 默认站点目录：`/var/www/html`
+- `--publish-index` 会同步更新远端 `/var/www/html/index.html`
+- 如果你已经本地生成过 HTML，也可以跳过生成阶段：
+
+```bash
+python scripts/deploy_market_daily_report.py \
+  --date 2026-03-18 \
+  --host 167.179.78.250 \
+  --user root \
+  --skip-generate \
+  --html-path data/processed/market_daily/market_daily_20260318.html \
+  --publish-index
+```
+
 ## 数据与输出
 
 输出目录：`data/processed`

@@ -17,6 +17,7 @@ class QuotesCollector:
     """Collector for stock daily quotes."""
 
     PROGRESS_EVERY = 50
+    UPSERT_BATCH_SIZE = 100
     
     def __init__(self, db: DatabaseConnection):
         self.db = db
@@ -35,62 +36,64 @@ class QuotesCollector:
         """
         print(f"Collecting stock quotes for {trade_date}...", flush=True)
         
-        records = self._fetch_quotes(trade_date)
-        if not records:
+        count = self._collect_streaming(trade_date)
+        if count <= 0:
             print(f"No quotes data collected for {trade_date}", flush=True)
             return 0
-        
-        unique_keys = self.repo.get_unique_keys()
-        print(f"Upserting {len(records)} quote records into database...", flush=True)
-        count = self.repo.upsert_many(records, unique_keys)
         print(f"Stored {count} stock quotes for {trade_date}", flush=True)
         return count
 
     def collect_limited(self, trade_date: str, limit: int) -> int:
         """Collect and store quotes for only the first N stocks."""
         print(f"Collecting up to {limit} stock quotes for {trade_date}...", flush=True)
-        records = self._fetch_quotes(trade_date, limit=limit)
-        if not records:
+        count = self._collect_streaming(trade_date, limit=limit)
+        if count <= 0:
             print(f"No quotes data collected for {trade_date}", flush=True)
             return 0
-
-        unique_keys = self.repo.get_unique_keys()
-        print(f"Upserting {len(records)} quote records into database...", flush=True)
-        count = self.repo.upsert_many(records, unique_keys)
         print(f"Stored {count} stock quotes for {trade_date}", flush=True)
         return count
-    
-    def _fetch_quotes(self, trade_date: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Fetch stock quotes from AkShare.
-        
-        Args:
-            trade_date: Trade date in YYYY-MM-DD format
-            
-        Returns:
-            List of quote records
-        """
-        records: List[Dict[str, Any]] = []
+
+    def _collect_streaming(self, trade_date: str, limit: Optional[int] = None) -> int:
+        """Fetch quotes and upsert them in batches for resumable execution."""
         all_stocks = self._get_all_stocks()
         if not all_stocks:
             print("Failed to load stock universe from AkShare sources", flush=True)
-            return []
+            return 0
         if limit is not None and limit > 0:
             all_stocks = all_stocks[:limit]
             print(f"Stock universe trimmed to first {limit} symbols", flush=True)
 
         total = len(all_stocks)
         print(f"Loaded stock universe with {total} symbols", flush=True)
+        existing_symbols = self._get_existing_symbols(trade_date)
+        if existing_symbols:
+            print(
+                f"Found {len(existing_symbols)} existing quotes for {trade_date}; will skip them and resume",
+                flush=True,
+            )
 
         success_count = 0
         error_count = 0
         no_data_count = 0
+        skipped_count = 0
+        inserted_count = 0
+        batch: List[Dict[str, Any]] = []
+        unique_keys = self.repo.get_unique_keys()
 
         for index, stock in enumerate(all_stocks, start=1):
             raw_code = stock.get("code", "")
             stock_name = stock.get("name", "")
             symbol = stock.get("symbol", "")
             if not raw_code:
+                continue
+            if symbol in existing_symbols:
+                skipped_count += 1
+                if index % self.PROGRESS_EVERY == 0 or index == total:
+                    print(
+                        f"[progress] processed={index}/{total} inserted={inserted_count} skipped={skipped_count} "
+                        f"success={success_count} no_data={no_data_count} errors={error_count}",
+                        flush=True,
+                    )
                 continue
             try:
                 rows = self._fetch_daily_rows(symbol=symbol, trade_date=trade_date)
@@ -104,13 +107,20 @@ class QuotesCollector:
                         raw_code=raw_code,
                         stock_name=stock_name,
                     )
-                    records.append(record)
+                    batch.append(record)
                     success_count += 1
                     if success_count <= 3:
                         print(
                             f"[sample {success_count}] {record['symbol']} {record['name']} close={record['close']} pct_chg={record['pct_chg']}",
                             flush=True,
                         )
+                    if len(batch) >= self.UPSERT_BATCH_SIZE:
+                        inserted_count += self._flush_batch(
+                            batch=batch,
+                            unique_keys=unique_keys,
+                            trade_date=trade_date,
+                        )
+                        batch = []
                 else:
                     no_data_count += 1
 
@@ -122,16 +132,54 @@ class QuotesCollector:
 
             if index % self.PROGRESS_EVERY == 0 or index == total:
                 print(
-                    f"[progress] processed={index}/{total} success={success_count} no_data={no_data_count} errors={error_count}",
+                    f"[progress] processed={index}/{total} inserted={inserted_count} skipped={skipped_count} "
+                    f"success={success_count} no_data={no_data_count} errors={error_count}",
                     flush=True,
                 )
 
+        if batch:
+            inserted_count += self._flush_batch(
+                batch=batch,
+                unique_keys=unique_keys,
+                trade_date=trade_date,
+            )
+
         print(
-            f"Finished fetching quotes: total={total} success={success_count} no_data={no_data_count} errors={error_count}",
+            f"Finished fetching quotes: total={total} inserted={inserted_count} skipped={skipped_count} "
+            f"success={success_count} no_data={no_data_count} errors={error_count}",
             flush=True,
         )
+        return inserted_count
 
-        return records
+    def _flush_batch(
+        self,
+        batch: List[Dict[str, Any]],
+        unique_keys: List[str],
+        trade_date: str,
+    ) -> int:
+        """Upsert a batch of quote records."""
+        print(
+            f"Upserting batch of {len(batch)} quote records for {trade_date}...",
+            flush=True,
+        )
+        count = self.repo.upsert_many(batch, unique_keys)
+        print(
+            f"Batch stored: {count} quote records for {trade_date}",
+            flush=True,
+        )
+        return count
+
+    def _get_existing_symbols(self, trade_date: str) -> set[str]:
+        """Load already collected symbols for a trade date."""
+        rows = self.db.fetchall(
+            "SELECT symbol FROM daily_stock_quotes WHERE trade_date = ?",
+            (trade_date,),
+        )
+        return {
+            str(row["symbol"]).strip()
+            for row in rows
+            if row and str(row["symbol"]).strip()
+        }
 
     def _fetch_daily_rows(self, symbol: str, trade_date: str) -> Optional[pd.DataFrame]:
         """Fetch daily rows up to the target date using a working AkShare source."""

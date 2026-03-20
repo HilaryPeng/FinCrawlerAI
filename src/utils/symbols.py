@@ -26,14 +26,16 @@ def normalize_symbol(code: str) -> str:
         return code
     if code.startswith("bj"):
         return code
-    
-    if len(code) == 6 and code.isdigit():
-        if code.startswith("6"):
-            return f"sh{code}"
-        elif code.startswith("0") or code.startswith("3"):
-            return f"sz{code}"
-        elif code.startswith("8") or code.startswith("4"):
-            return f"bj{code}"
+
+    digits = re.sub(r"[^0-9]", "", code)
+    if digits and len(digits) <= 6:
+        digits = digits.zfill(6)
+        if digits.startswith("6"):
+            return f"sh{digits}"
+        if digits.startswith("0") or digits.startswith("3"):
+            return f"sz{digits}"
+        if digits.startswith("8") or digits.startswith("4") or digits.startswith("9"):
+            return f"bj{digits}"
     
     return code
 
