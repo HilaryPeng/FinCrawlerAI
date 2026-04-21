@@ -18,6 +18,18 @@
 - 保留数据快照
 - 后续可切换为服务器本地定时跑
 
+## OpenSpec
+
+- 正式规则源位于 `openspec/specs/`
+- 影响日报结果的改动，先在 `openspec/changes/` 建 proposal，再改代码
+- 运行时会直接读取 `strategy` / `runtime` / `presentation` 当前 spec
+
+校验命令：
+
+```bash
+python scripts/validate_market_daily_spec.py
+```
+
 ## 1. 当前核心目录
 
 ```text

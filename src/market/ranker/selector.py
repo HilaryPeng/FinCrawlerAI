@@ -11,6 +11,7 @@ from src.db import (
     DatabaseConnection,
     DailyObservationPoolRepository,
 )
+from src.specs import load_market_daily_spec
 from .board_ranker import BoardRanker
 from .stock_ranker import StockRanker
 
@@ -18,20 +19,12 @@ from .stock_ranker import StockRanker
 class ObservationPoolSelector:
     """Select the daily observation pool from ranked features."""
 
-    MAX_PER_BOARD = 6
-    MAX_PER_BOARD_ROLE = 2
-    ROLE_TARGETS = {
-        "dragon": 6,
-        "center": 6,
-        "follow": 6,
-        "watchlist": 2,
-    }
-
     def __init__(self, db: DatabaseConnection):
         self.db = db
         self.repo = DailyObservationPoolRepository(db)
         self.board_ranker = BoardRanker(db)
         self.stock_ranker = StockRanker(db)
+        self.spec = load_market_daily_spec().strategy["observation_pool"]
 
     def build(self, trade_date: str) -> int:
         print(f"Selecting observation pool for {trade_date}...", flush=True)
@@ -53,7 +46,7 @@ class ObservationPoolSelector:
         }
         top_board_keys = {
             (row["board_name"], row["board_type"])
-            for row in board_rows[:10]
+            for row in board_rows[: int(self.spec["top_board_limit"])]
         }
 
         selected: List[Dict[str, Any]] = []
@@ -61,7 +54,7 @@ class ObservationPoolSelector:
         board_counts: Dict[Tuple[str | None, str | None], int] = {}
         board_role_counts: Dict[Tuple[str | None, str | None, str], int] = {}
 
-        for role_tag, target in self.ROLE_TARGETS.items():
+        for role_tag, target in self.spec["role_targets"].items():
             candidates = self._role_candidates(
                 stock_rows=stock_rows,
                 role_tag=role_tag,
@@ -91,7 +84,7 @@ class ObservationPoolSelector:
                 if taken >= target:
                     break
 
-        if len(selected) < 20:
+        if len(selected) < int(self.spec["top20_size"]):
             for candidate in stock_rows:
                 symbol = candidate["symbol"]
                 board_key = (candidate.get("primary_board_name"), candidate.get("primary_board_type"))
@@ -111,7 +104,7 @@ class ObservationPoolSelector:
                 board_counts[board_key] = board_counts.get(board_key, 0) + 1
                 role_key = (board_key[0], board_key[1], candidate.get("role_tag"))
                 board_role_counts[role_key] = board_role_counts.get(role_key, 0) + 1
-                if len(selected) >= 20:
+                if len(selected) >= int(self.spec["top20_size"]):
                     break
 
         backup_candidates = []
@@ -127,7 +120,7 @@ class ObservationPoolSelector:
                     pool_group="backup",
                 )
             )
-            if len(backup_candidates) >= 10:
+            if len(backup_candidates) >= int(self.spec["backup_size"]):
                 break
 
         records = selected + backup_candidates
@@ -167,12 +160,12 @@ class ObservationPoolSelector:
     ) -> bool:
         if board_key[0] is None:
             return True
-        if board_counts.get(board_key, 0) >= self.MAX_PER_BOARD:
+        if board_counts.get(board_key, 0) >= int(self.spec["max_per_board"]):
             return False
         if role_tag is None:
             return True
         role_key = (board_key[0], board_key[1], role_tag)
-        if board_role_counts.get(role_key, 0) >= self.MAX_PER_BOARD_ROLE:
+        if board_role_counts.get(role_key, 0) >= int(self.spec["max_per_board_role"]):
             return False
         return True
 

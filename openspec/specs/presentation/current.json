@@ -1,0 +1,46 @@
+{
+  "roles": {
+    "dragon": "龙头",
+    "center": "中军",
+    "follow": "扩散",
+    "watchlist": "观察补位"
+  },
+  "markdown": {
+    "report_title": "市场观察日报",
+    "market_overview": "市场总览",
+    "top_boards": "主线板块 Top 10",
+    "observation_pool": "重点观察 20 只",
+    "observation_reason": "观察理由",
+    "role_distribution": "角色分布",
+    "board_distribution": "板块分布",
+    "backup_pool": "备选池"
+  },
+  "html": {
+    "page_title": "市场观察日报",
+    "hero": {
+      "eyebrow": "Market Daily Report",
+      "body_template": "{trade_date} 聚焦当天最值得先看懂的盘面结构：指数温度、情绪强弱、主线板块与核心标的，把分散信息压缩成一张可以直接用于复盘和次日盯盘的决策面板。",
+      "focus_title": "本页聚焦",
+      "core_targets_title": "核心标的 3 只"
+    },
+    "sections": {
+      "market_overview": "市场总览",
+      "top_boards": "主线板块",
+      "observation_pool": "重点观察 20 只",
+      "backup_pool": "备选池"
+    },
+    "labels": {
+      "summary_score": "总分",
+      "board_rank": "板块排",
+      "stock_rank": "股票排",
+      "modal_selected_reason": "入选逻辑",
+      "modal_watch_points": "重点盯盘",
+      "modal_risk_flags": "风险提示",
+      "gauge_market": "大盘",
+      "gauge_emotion": "情绪",
+      "index_sh": "上证",
+      "index_sz": "深成",
+      "index_cyb": "创业板"
+    }
+  }
+}

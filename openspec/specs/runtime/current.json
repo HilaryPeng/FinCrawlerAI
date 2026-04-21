@@ -1,0 +1,34 @@
+{
+  "quality": {
+    "baseline_quote_ratio": 0.9,
+    "thresholds": {
+      "quotes": 4000,
+      "boards": 400,
+      "limits": 10,
+      "breadth": 1,
+      "membership": 4000
+    },
+    "blocked_checks": ["quotes", "boards", "breadth"],
+    "publish_allow_statuses": ["complete", "partial", "blocked"]
+  },
+  "pipeline": {
+    "normal_run_steps": [
+      "collect_market_data",
+      "collect_industry_memberships_baostock",
+      "build_csrc_industry_board_quotes",
+      "build_board_features",
+      "build_stock_features",
+      "build_observation_pool",
+      "generate_market_daily_report",
+      "generate_market_daily_index"
+    ],
+    "rerun_same_day_steps": [
+      "recollect_missing_data",
+      "rebuild_board_dependencies",
+      "rebuild_stock_features",
+      "rebuild_observation_pool",
+      "regenerate_market_daily_report",
+      "republish_html"
+    ]
+  }
+}

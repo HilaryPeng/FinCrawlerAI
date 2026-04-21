@@ -1,0 +1,167 @@
+{
+  "board_feature": {
+    "weights": {
+      "pct_strength": 0.2,
+      "limit_strength": 0.2,
+      "breadth_score": 0.15,
+      "news_heat_score": 0.15,
+      "dragon_strength": 0.15,
+      "center_strength": 0.1,
+      "continuity_score": 0.05
+    },
+    "negative_pct_penalties": {
+      "pct_lt_0": 0.72,
+      "pct_lte_neg_1_5": 0.78,
+      "limit_up_lte_1_and_pct_lt_0": 0.85
+    },
+    "phase_thresholds": {
+      "accelerate": {
+        "board_score_gte": 70,
+        "limit_up_count_gte": 3,
+        "continuity_score_gte": 20
+      },
+      "expand_primary": {
+        "board_score_gte": 45,
+        "limit_up_count_gte": 2,
+        "pct_chg_gte": 0
+      },
+      "expand_secondary": {
+        "board_score_gte": 55,
+        "pct_chg_gt": 1.0
+      },
+      "start_primary": {
+        "board_score_gte": 28,
+        "limit_up_count_gte": 2,
+        "pct_chg_gte": 0
+      },
+      "start_secondary": {
+        "board_score_gte": 35,
+        "pct_chg_gt": 0
+      },
+      "fade": {
+        "pct_chg_lt": 0,
+        "limit_up_count_lte": 1,
+        "continuity_score_lt": 20
+      }
+    }
+  },
+  "stock_feature": {
+    "dragon_score": {
+      "weights": {
+        "pct_chg": 4.0,
+        "limit_up": 25.0,
+        "limit_up_streak": 15.0,
+        "board_score_ref": 0.25,
+        "news_heat_score": 0.1,
+        "jygs_signal_score": 0.12,
+        "attention_score": 0.12
+      },
+      "phase_multipliers": {
+        "default": 1.0,
+        "fade": 0.55,
+        "start": 1.08,
+        "accelerate": 1.12
+      }
+    },
+    "center_score": {
+      "amount_divisor": 2000000000.0,
+      "amount_score_cap": 45.0,
+      "market_cap_bonuses": {
+        "mid_cap_min": 20000000000.0,
+        "mid_cap_max": 500000000000.0,
+        "mid_cap_bonus": 25.0,
+        "mega_cap_bonus": 18.0
+      },
+      "rank_bonuses": {
+        "top3_bonus": 12.0,
+        "top8_bonus": 6.0
+      },
+      "weights": {
+        "pct_chg": 2.0,
+        "pct_chg_3d": 1.2,
+        "board_score_ref": 0.15,
+        "news_heat_score": 0.05,
+        "jygs_signal_score": 0.04,
+        "attention_score": 0.06
+      },
+      "phase_multipliers": {
+        "default": 1.0,
+        "fade": 0.72,
+        "start": 1.05
+      }
+    },
+    "follow_score": {
+      "freshness_bonus": {
+        "base": 12.0,
+        "days_in_limit_up_last_20_weight": 2.0
+      },
+      "weights": {
+        "pct_chg": 3.0,
+        "board_score_ref": 0.22,
+        "pct_chg_3d": 1.5,
+        "jygs_signal_score": 0.08,
+        "attention_score": 0.08
+      },
+      "limit_up_bonus": 8.0,
+      "phase_multipliers": {
+        "default": 1.0,
+        "fade": 0.58,
+        "start": 1.08,
+        "accelerate": 1.12
+      }
+    },
+    "risk_thresholds": {
+      "high_streak_min": 3,
+      "high_turnover_min": 0.2,
+      "high_amplitude_min": 12.0,
+      "isolated_spike_pct_min": 9.0,
+      "isolated_spike_board_score_lt": 40.0,
+      "weak_close_pct_lte": -5.0
+    },
+    "risk_weights": {
+      "high_streak": 18.0,
+      "high_turnover": 12.0,
+      "high_amplitude": 10.0,
+      "isolated_spike": 15.0,
+      "weak_close": 10.0,
+      "fading_board": 12.0
+    },
+    "role_rules": {
+      "watchlist_min_score": 20.0,
+      "dragon": {
+        "allowed_board_phases": ["start", "expand", "accelerate"],
+        "disallowed_risk_flags": ["fading_board"],
+        "require_limit_up_or_streak": true
+      },
+      "center": {
+        "allowed_board_phases": ["start", "expand", "accelerate"],
+        "min_amount": 2000000000.0,
+        "max_amount_rank_in_board": 8,
+        "require_positive_3d_return": true
+      },
+      "follow": {
+        "allowed_board_phases": ["start", "expand", "accelerate"],
+        "disallowed_risk_flags": ["fading_board"],
+        "allow_missing_3d_return": true,
+        "require_non_negative_3d_return": true
+      }
+    },
+    "final_score_weights": {
+      "board_score_ref": 0.2,
+      "news_heat_score": 0.1
+    }
+  },
+  "observation_pool": {
+    "top_board_limit": 10,
+    "top20_size": 20,
+    "backup_size": 10,
+    "max_per_board": 6,
+    "max_per_board_role": 2,
+    "role_targets": {
+      "dragon": 6,
+      "center": 6,
+      "follow": 6,
+      "watchlist": 2
+    }
+  }
+}

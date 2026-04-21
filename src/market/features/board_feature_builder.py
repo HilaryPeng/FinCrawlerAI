@@ -14,6 +14,7 @@ from src.db import (
     DatabaseConnection,
     DailyBoardFeaturesRepository,
 )
+from src.specs import load_market_daily_spec
 
 
 class BoardFeatureBuilder:
@@ -22,6 +23,7 @@ class BoardFeatureBuilder:
     def __init__(self, db: DatabaseConnection):
         self.db = db
         self.repo = DailyBoardFeaturesRepository(db)
+        self.spec = load_market_daily_spec().strategy["board_feature"]
 
     def build(self, trade_date: str) -> int:
         """Build and store board features for a trade date."""
@@ -345,21 +347,23 @@ class BoardFeatureBuilder:
         pct_value = pct_chg or 0.0
         pct_strength = max(min((pct_chg or 0.0) * 10, 100.0), -30.0)
         limit_strength = min(limit_up_count * 8, 100.0)
+        weights = self.spec["weights"]
         board_score = (
-            0.20 * max(pct_strength, 0.0)
-            + 0.20 * limit_strength
-            + 0.15 * breadth_score
-            + 0.15 * news_heat_score
-            + 0.15 * dragon_strength
-            + 0.10 * center_strength
-            + 0.05 * continuity_score
+            float(weights["pct_strength"]) * max(pct_strength, 0.0)
+            + float(weights["limit_strength"]) * limit_strength
+            + float(weights["breadth_score"]) * breadth_score
+            + float(weights["news_heat_score"]) * news_heat_score
+            + float(weights["dragon_strength"]) * dragon_strength
+            + float(weights["center_strength"]) * center_strength
+            + float(weights["continuity_score"]) * continuity_score
         )
+        penalties = self.spec["negative_pct_penalties"]
         if pct_value < 0:
-            board_score *= 0.72
+            board_score *= float(penalties["pct_lt_0"])
         if pct_value <= -1.5:
-            board_score *= 0.78
+            board_score *= float(penalties["pct_lte_neg_1_5"])
         if limit_up_count <= 1 and pct_value < 0:
-            board_score *= 0.85
+            board_score *= float(penalties["limit_up_lte_1_and_pct_lt_0"])
         return round(board_score, 2)
 
     def _infer_phase_hint(
@@ -370,19 +374,38 @@ class BoardFeatureBuilder:
         continuity_score: float,
     ) -> str:
         pct_chg = pct_chg or 0.0
-        if pct_chg < 0 and limit_up_count <= 1:
+        thresholds = self.spec["phase_thresholds"]
+        fade = thresholds["fade"]
+        if pct_chg < float(fade["pct_chg_lt"]) and limit_up_count <= int(fade["limit_up_count_lte"]):
             return "fade"
-        if pct_chg < 0 and continuity_score < 20:
+        if pct_chg < float(fade["pct_chg_lt"]) and continuity_score < float(fade["continuity_score_lt"]):
             return "fade"
-        if board_score >= 70 and limit_up_count >= 3 and continuity_score >= 20:
+        accelerate = thresholds["accelerate"]
+        if (
+            board_score >= float(accelerate["board_score_gte"])
+            and limit_up_count >= int(accelerate["limit_up_count_gte"])
+            and continuity_score >= float(accelerate["continuity_score_gte"])
+        ):
             return "accelerate"
-        if board_score >= 45 and limit_up_count >= 2 and pct_chg >= 0:
+        expand_primary = thresholds["expand_primary"]
+        if (
+            board_score >= float(expand_primary["board_score_gte"])
+            and limit_up_count >= int(expand_primary["limit_up_count_gte"])
+            and pct_chg >= float(expand_primary["pct_chg_gte"])
+        ):
             return "expand"
-        if board_score >= 55 and pct_chg > 1.0:
+        expand_secondary = thresholds["expand_secondary"]
+        if board_score >= float(expand_secondary["board_score_gte"]) and pct_chg > float(expand_secondary["pct_chg_gt"]):
             return "expand"
-        if board_score >= 28 and limit_up_count >= 2 and pct_chg >= 0:
+        start_primary = thresholds["start_primary"]
+        if (
+            board_score >= float(start_primary["board_score_gte"])
+            and limit_up_count >= int(start_primary["limit_up_count_gte"])
+            and pct_chg >= float(start_primary["pct_chg_gte"])
+        ):
             return "start"
-        if board_score >= 35 and pct_chg > 0:
+        start_secondary = thresholds["start_secondary"]
+        if board_score >= float(start_secondary["board_score_gte"]) and pct_chg > float(start_secondary["pct_chg_gt"]):
             return "start"
         return "fade"
 

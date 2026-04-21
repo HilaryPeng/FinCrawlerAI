@@ -201,6 +201,7 @@ def main() -> int:
     from src.market.quality import DataQualityChecker
     from src.market.ranker import ObservationPoolSelector
     from src.market.report import DailyReportGenerator
+    from src.specs import load_market_daily_spec
 
     config = get_config()
     config.ensure_directories()
@@ -274,12 +275,16 @@ def main() -> int:
             print(f"[warn] sync_data_snapshot_to_server failed: {exc}", flush=True)
 
     quality = DataQualityChecker(db).check(trade_date)
+    runtime_quality_spec = load_market_daily_spec().runtime["quality"]
     report_url = f"{args.base_url.rstrip('/')}/{html_path.name}"
     print(f"quality={quality}", flush=True)
     print(f"report_url={report_url}", flush=True)
+    publish_allowed = quality["status"] in set(runtime_quality_spec["publish_allow_statuses"])
+    if not publish_allowed:
+        print(f"publish_skipped_due_to_quality={quality['status']}", flush=True)
 
     if args.notify_via_server:
-        if publish_ok and sync_ok:
+        if publish_ok and sync_ok and publish_allowed:
             if not remote_latest_link:
                 remote_latest_link = f"{args.remote_data_base_dir.rstrip('/')}/latest"
             remote_json_path = f"{remote_latest_link}/data/processed/market_daily/{json_path.name}"

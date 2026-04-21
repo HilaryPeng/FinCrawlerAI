@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from src.db import DatabaseConnection
+from src.specs import load_market_daily_spec
 
 
 class DataQualityChecker:
@@ -18,6 +19,7 @@ class DataQualityChecker:
 
     def __init__(self, db: DatabaseConnection):
         self.db = db
+        self.spec = load_market_daily_spec().runtime["quality"]
 
     def check(self, trade_date: str) -> Dict[str, Any]:
         quote_count = self._count("daily_stock_quotes", trade_date)
@@ -28,20 +30,25 @@ class DataQualityChecker:
         news_count = self._count("news_items", trade_date, by_publish_date=True)
 
         baseline_quotes = self._baseline_quotes()
-        required_quotes = max(int(baseline_quotes * 0.9), self.DEFAULT_QUOTES_THRESHOLD)
+        thresholds = self.spec["thresholds"]
+        required_quotes = max(
+            int(baseline_quotes * float(self.spec["baseline_quote_ratio"])),
+            int(thresholds["quotes"]),
+        )
         quote_ratio = round((quote_count / baseline_quotes), 4) if baseline_quotes > 0 else None
 
         checks = {
             "quotes": quote_count >= required_quotes,
-            "boards": board_count >= self.DEFAULT_BOARD_THRESHOLD,
-            "limits": limit_count >= self.DEFAULT_LIMITS_THRESHOLD,
-            "breadth": breadth_count >= 1,
-            "membership": membership_count >= self.DEFAULT_QUOTES_THRESHOLD,
+            "boards": board_count >= int(thresholds["boards"]),
+            "limits": limit_count >= int(thresholds["limits"]),
+            "breadth": breadth_count >= int(thresholds["breadth"]),
+            "membership": membership_count >= int(thresholds["membership"]),
         }
         passed_checks = sum(1 for passed in checks.values() if passed)
 
         status = "complete"
-        if not checks["quotes"] or not checks["boards"] or not checks["breadth"]:
+        blocked_checks = set(self.spec["blocked_checks"])
+        if any(not checks.get(name, False) for name in blocked_checks):
             status = "blocked"
         elif passed_checks < len(checks):
             status = "partial"

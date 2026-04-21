@@ -14,6 +14,7 @@ from src.db import (
     DatabaseConnection,
     DailyStockFeaturesRepository,
 )
+from src.specs import load_market_daily_spec
 
 
 class StockFeatureBuilder:
@@ -22,6 +23,7 @@ class StockFeatureBuilder:
     def __init__(self, db: DatabaseConnection):
         self.db = db
         self.repo = DailyStockFeaturesRepository(db)
+        self.spec = load_market_daily_spec().strategy["stock_feature"]
 
     def build(self, trade_date: str) -> int:
         """Build and store stock features for a trade date."""
@@ -568,19 +570,17 @@ class StockFeatureBuilder:
         board_phase_hint: str | None,
         attention_score: float,
     ) -> float:
-        score = max(pct_chg * 4, 0.0)
-        score += limit_up * 25
-        score += limit_up_streak * 15
-        score += board_score_ref * 0.25
-        score += news_heat_score * 0.1
-        score += jygs_signal_score * 0.12
-        score += attention_score * 0.12
-        if board_phase_hint == "fade":
-            score *= 0.55
-        elif board_phase_hint == "start":
-            score *= 1.08
-        elif board_phase_hint == "accelerate":
-            score *= 1.12
+        config = self.spec["dragon_score"]
+        weights = config["weights"]
+        multipliers = config["phase_multipliers"]
+        score = max(pct_chg * float(weights["pct_chg"]), 0.0)
+        score += limit_up * float(weights["limit_up"])
+        score += limit_up_streak * float(weights["limit_up_streak"])
+        score += board_score_ref * float(weights["board_score_ref"])
+        score += news_heat_score * float(weights["news_heat_score"])
+        score += jygs_signal_score * float(weights["jygs_signal_score"])
+        score += attention_score * float(weights["attention_score"])
+        score *= float(multipliers.get(board_phase_hint or "", multipliers["default"]))
         return round(min(score, 100.0), 2)
 
     def _compute_center_score(
@@ -597,30 +597,38 @@ class StockFeatureBuilder:
         attention_score: float,
         tech_bonus: float,
     ) -> float:
-        amount_score = min(amount / 2_000_000_000, 45.0)
+        config = self.spec["center_score"]
+        amount_score = min(amount / float(config["amount_divisor"]), float(config["amount_score_cap"]))
         mv_score = 0.0
-        if 20_000_000_000 <= total_mv <= 500_000_000_000:
-            mv_score = 25.0
-        elif total_mv > 500_000_000_000:
-            mv_score = 18.0
-        rank_bonus = 12.0 if 0 < amount_rank_in_board <= 3 else 6.0 if 0 < amount_rank_in_board <= 8 else 0.0
-        trend_bonus = max((pct_chg_3d or 0.0) * 1.2, 0.0)
+        market_cap_bonuses = config["market_cap_bonuses"]
+        if float(market_cap_bonuses["mid_cap_min"]) <= total_mv <= float(market_cap_bonuses["mid_cap_max"]):
+            mv_score = float(market_cap_bonuses["mid_cap_bonus"])
+        elif total_mv > float(market_cap_bonuses["mid_cap_max"]):
+            mv_score = float(market_cap_bonuses["mega_cap_bonus"])
+        rank_bonuses = config["rank_bonuses"]
+        rank_bonus = (
+            float(rank_bonuses["top3_bonus"])
+            if 0 < amount_rank_in_board <= 3
+            else float(rank_bonuses["top8_bonus"])
+            if 0 < amount_rank_in_board <= 8
+            else 0.0
+        )
+        weights = config["weights"]
+        trend_bonus = max((pct_chg_3d or 0.0) * float(weights["pct_chg_3d"]), 0.0)
         score = (
             amount_score
             + mv_score
             + rank_bonus
-            + max(pct_chg * 2, 0.0)
+            + max(pct_chg * float(weights["pct_chg"]), 0.0)
             + trend_bonus
-            + board_score_ref * 0.15
-            + news_heat_score * 0.05
-            + jygs_signal_score * 0.04
-            + attention_score * 0.06
+            + board_score_ref * float(weights["board_score_ref"])
+            + news_heat_score * float(weights["news_heat_score"])
+            + jygs_signal_score * float(weights["jygs_signal_score"])
+            + attention_score * float(weights["attention_score"])
             + tech_bonus
         )
-        if board_phase_hint == "fade":
-            score *= 0.72
-        elif board_phase_hint == "start":
-            score *= 1.05
+        multipliers = config["phase_multipliers"]
+        score *= float(multipliers.get(board_phase_hint or "", multipliers["default"]))
         return round(min(score, 100.0), 2)
 
     def _compute_follow_score(
@@ -634,24 +642,27 @@ class StockFeatureBuilder:
         jygs_signal_score: float,
         attention_score: float,
     ) -> float:
+        config = self.spec["follow_score"]
         recent_momentum = pct_chg_3d or 0.0
-        freshness_bonus = max(12 - days_in_limit_up_last_20 * 2, 0.0)
+        freshness = config["freshness_bonus"]
+        freshness_bonus = max(
+            float(freshness["base"])
+            - days_in_limit_up_last_20 * float(freshness["days_in_limit_up_last_20_weight"]),
+            0.0,
+        )
+        weights = config["weights"]
         score = (
-            max(pct_chg * 3, 0.0)
-            + board_score_ref * 0.22
-            + max(recent_momentum * 1.5, 0.0)
+            max(pct_chg * float(weights["pct_chg"]), 0.0)
+            + board_score_ref * float(weights["board_score_ref"])
+            + max(recent_momentum * float(weights["pct_chg_3d"]), 0.0)
             + freshness_bonus
-            + jygs_signal_score * 0.08
-            + attention_score * 0.08
+            + jygs_signal_score * float(weights["jygs_signal_score"])
+            + attention_score * float(weights["attention_score"])
         )
         if limit_up:
-            score += 8
-        if board_phase_hint == "fade":
-            score *= 0.58
-        elif board_phase_hint == "start":
-            score *= 1.08
-        elif board_phase_hint == "accelerate":
-            score *= 1.12
+            score += float(config["limit_up_bonus"])
+        multipliers = config["phase_multipliers"]
+        score *= float(multipliers.get(board_phase_hint or "", multipliers["default"]))
         return round(min(score, 100.0), 2)
 
     def _build_risk_flags(
@@ -663,31 +674,28 @@ class StockFeatureBuilder:
         board_score_ref: float,
         board_phase_hint: str | None,
     ) -> List[str]:
+        thresholds = self.spec["risk_thresholds"]
         flags: List[str] = []
-        if limit_up_streak >= 3:
+        if limit_up_streak >= int(thresholds["high_streak_min"]):
             flags.append("high_streak")
-        if turnover >= 0.20:
+        if turnover >= float(thresholds["high_turnover_min"]):
             flags.append("high_turnover")
-        if amplitude >= 12:
+        if amplitude >= float(thresholds["high_amplitude_min"]):
             flags.append("high_amplitude")
-        if pct_chg >= 9 and board_score_ref < 40:
+        if (
+            pct_chg >= float(thresholds["isolated_spike_pct_min"])
+            and board_score_ref < float(thresholds["isolated_spike_board_score_lt"])
+        ):
             flags.append("isolated_spike")
-        if pct_chg <= -5:
+        if pct_chg <= float(thresholds["weak_close_pct_lte"]):
             flags.append("weak_close")
         if board_phase_hint == "fade" and pct_chg > 0:
             flags.append("fading_board")
         return flags
 
     def _compute_risk_score(self, risk_flags: List[str]) -> float:
-        weights = {
-            "high_streak": 18.0,
-            "high_turnover": 12.0,
-            "high_amplitude": 10.0,
-            "isolated_spike": 15.0,
-            "weak_close": 10.0,
-            "fading_board": 12.0,
-        }
-        score = sum(weights.get(flag, 0.0) for flag in risk_flags)
+        weights = self.spec["risk_weights"]
+        score = sum(float(weights.get(flag, 0.0)) for flag in risk_flags)
         return round(min(score, 100.0), 2)
 
     def _pick_role_tag(
@@ -703,22 +711,29 @@ class StockFeatureBuilder:
         pct_chg_3d: float | None,
         risk_flags: List[str],
     ) -> str:
+        rules = self.spec["role_rules"]
+        dragon_rule = rules["dragon"]
+        center_rule = rules["center"]
+        follow_rule = rules["follow"]
         dragon_allowed = (
-            (limit_up == 1 or limit_up_streak >= 1)
-            and board_phase_hint in {"start", "expand", "accelerate"}
-            and "fading_board" not in risk_flags
+            (not dragon_rule["require_limit_up_or_streak"] or limit_up == 1 or limit_up_streak >= 1)
+            and board_phase_hint in set(dragon_rule["allowed_board_phases"])
+            and not any(flag in risk_flags for flag in dragon_rule["disallowed_risk_flags"])
         )
         center_allowed = (
-            amount >= 2_000_000_000
+            amount >= float(center_rule["min_amount"])
             and amount_rank_in_board > 0
-            and amount_rank_in_board <= 8
-            and (pct_chg_3d or 0.0) > 0
-            and board_phase_hint in {"start", "expand", "accelerate"}
+            and amount_rank_in_board <= int(center_rule["max_amount_rank_in_board"])
+            and ((pct_chg_3d or 0.0) > 0 if center_rule["require_positive_3d_return"] else True)
+            and board_phase_hint in set(center_rule["allowed_board_phases"])
         )
+        follow_return_ok = pct_chg_3d is None and bool(follow_rule["allow_missing_3d_return"])
+        if pct_chg_3d is not None:
+            follow_return_ok = (pct_chg_3d or 0.0) > 0 if follow_rule["require_non_negative_3d_return"] else True
         follow_allowed = (
-            board_phase_hint in {"start", "expand", "accelerate"}
-            and ((pct_chg_3d or 0.0) > 0 or pct_chg_3d is None)
-            and "fading_board" not in risk_flags
+            board_phase_hint in set(follow_rule["allowed_board_phases"])
+            and follow_return_ok
+            and not any(flag in risk_flags for flag in follow_rule["disallowed_risk_flags"])
         )
 
         scores = {}
@@ -732,7 +747,7 @@ class StockFeatureBuilder:
         if not scores:
             return "watchlist"
         role_tag = max(scores, key=scores.get)
-        if scores[role_tag] < 20:
+        if scores[role_tag] < float(rules["watchlist_min_score"]):
             return "watchlist"
         return role_tag
 
@@ -752,7 +767,13 @@ class StockFeatureBuilder:
             "follow": follow_score,
             "watchlist": max(dragon_score, center_score, follow_score),
         }[role_tag]
-        score = role_score + board_score_ref * 0.2 + news_heat_score * 0.1 - risk_score
+        weights = self.spec["final_score_weights"]
+        score = (
+            role_score
+            + board_score_ref * float(weights["board_score_ref"])
+            + news_heat_score * float(weights["news_heat_score"])
+            - risk_score
+        )
         return round(max(score, 0.0), 2)
 
     def _day_ts_range(self, trade_date: str) -> Tuple[int, int]:

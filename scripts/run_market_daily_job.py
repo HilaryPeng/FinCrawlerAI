@@ -141,6 +141,7 @@ def main() -> int:
     from src.market.ranker import ObservationPoolSelector
     from src.market.report import DailyReportGenerator
     from src.notifier.feishu import FeishuNotifier
+    from src.specs import load_market_daily_spec
     from scripts.generate_market_daily_index import generate_index_page
 
     config = get_config()
@@ -191,14 +192,18 @@ def main() -> int:
     print(f"published_index={web_root / 'index.html'}", flush=True)
 
     quality = DataQualityChecker(db).check(trade_date)
+    runtime_quality_spec = load_market_daily_spec().runtime["quality"]
     print(f"quality={quality}", flush=True)
 
     report_url = f"{args.base_url.rstrip('/')}/{report_name}"
     index_url = f"{args.base_url.rstrip('/')}/"
     print(f"report_url={report_url}", flush=True)
     print(f"index_url={index_url}", flush=True)
+    publish_allowed = quality["status"] in set(runtime_quality_spec["publish_allow_statuses"])
+    if not publish_allowed:
+        print(f"publish_skipped_due_to_quality={quality['status']}", flush=True)
 
-    if args.notify_feishu:
+    if args.notify_feishu and publish_allowed:
         notifier = FeishuNotifier(config)
         markdown = build_notification_markdown(Path(report_result["json_path"]), report_url, quality["status"])
         notifier.send_markdown(title=f"市场观察日报 {trade_date}", markdown=markdown)

@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 from config.settings import get_config
 from src.db import DatabaseConnection
+from src.specs import load_market_daily_spec
 
 
 class DailyReportGenerator:
@@ -21,6 +22,9 @@ class DailyReportGenerator:
         self.config = get_config()
         self.output_dir = self.config.PROCESSED_DATA_DIR / "market_daily"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        spec = load_market_daily_spec()
+        self.presentation = spec.presentation
+        self.role_labels = self.presentation["roles"]
 
     def generate(self, trade_date: str) -> Dict[str, str]:
         report_data = self._build_report_data(trade_date)
@@ -80,6 +84,7 @@ class DailyReportGenerator:
         return dict(row)
 
     def _get_top_boards(self, trade_date: str, limit: int = 10) -> List[Dict[str, Any]]:
+        limit = min(limit, self._top_boards_limit())
         rows = self.db.fetchall(
             """
             SELECT
@@ -185,14 +190,15 @@ class DailyReportGenerator:
         backup_pool = report_data["backup_pool"]
         role_summary = report_data["role_summary"]
         board_distribution = report_data["board_distribution"]
+        markdown = self.presentation["markdown"]
 
         lines: List[str] = []
-        lines.append(f"# 市场观察日报 {metadata['trade_date']}")
+        lines.append(f"# {markdown['report_title']} {metadata['trade_date']}")
         lines.append("")
         lines.append(f"生成时间：{metadata['generated_at']}")
         lines.append("")
 
-        lines.append("## 市场总览")
+        lines.append(f"## {markdown['market_overview']}")
         lines.append("")
         lines.append(f"- 上证：{market_summary.get('sh_index_pct')}")
         lines.append(f"- 深成：{market_summary.get('sz_index_pct')}")
@@ -204,7 +210,7 @@ class DailyReportGenerator:
         lines.append(f"- 连板高度：{market_summary.get('highest_streak')}")
         lines.append("")
 
-        lines.append("## 主线板块 Top 10")
+        lines.append(f"## {markdown['top_boards']}")
         lines.append("")
         lines.append("| 排名 | 板块 | 类型 | 板块分 | 涨跌幅 | 阶段 | 涨停数 | 核心股数 |")
         lines.append("|---|---|---|---:|---:|---|---:|---:|")
@@ -216,46 +222,46 @@ class DailyReportGenerator:
             )
         lines.append("")
 
-        lines.append("## 重点观察 20 只")
+        lines.append(f"## {markdown['observation_pool']}")
         lines.append("")
         lines.append("| 代码 | 名称 | 角色 | 板块 | 板块排名 | 股票排名 | 总分 |")
         lines.append("|---|---|---|---|---:|---:|---:|")
         for row in observation_pool:
             lines.append(
-                f"| {row['symbol']} | {row['name']} | {row['role_tag']} | {row.get('board_name')} | "
+                f"| {row['symbol']} | {row['name']} | {self._role_label(row['role_tag'])} | {row.get('board_name')} | "
                 f"{row.get('board_rank')} | {row.get('stock_rank')} | {row.get('final_score')} |"
             )
         lines.append("")
 
-        lines.append("## 观察理由")
+        lines.append(f"## {markdown['observation_reason']}")
         lines.append("")
         for index, row in enumerate(observation_pool, start=1):
             lines.append(f"### {index}. {row['name']} ({row['symbol']})")
-            lines.append(f"- 角色：{row['role_tag']}")
+            lines.append(f"- 角色：{self._role_label(row['role_tag'])}")
             lines.append(f"- 板块：{row.get('board_name')}")
             lines.append(f"- 原因：{row.get('selected_reason')}")
             lines.append(f"- 观察点：{row.get('watch_points')}")
             lines.append(f"- 风险：{row.get('risk_flags')}")
             lines.append("")
 
-        lines.append("## 角色分布")
+        lines.append(f"## {markdown['role_distribution']}")
         lines.append("")
         for row in role_summary:
-            lines.append(f"- {row['role_tag']}: {row['cnt']}")
+            lines.append(f"- {self._role_label(row['role_tag'])}: {row['cnt']}")
         lines.append("")
 
-        lines.append("## 板块分布")
+        lines.append(f"## {markdown['board_distribution']}")
         lines.append("")
         for row in board_distribution:
             lines.append(f"- {row['board_name']}: {row['cnt']}")
         lines.append("")
 
         if backup_pool:
-            lines.append("## 备选池")
+            lines.append(f"## {markdown['backup_pool']}")
             lines.append("")
             for row in backup_pool:
                 lines.append(
-                    f"- {row['symbol']} {row['name']} | {row['role_tag']} | "
+                    f"- {row['symbol']} {row['name']} | {self._role_label(row['role_tag'])} | "
                     f"{row.get('board_name')} | {row.get('final_score')}"
                 )
             lines.append("")
@@ -336,7 +342,7 @@ class DailyReportGenerator:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>市场观察日报 {self._esc(metadata['trade_date'])}</title>
+  <title>{self._esc(self.presentation['html']['page_title'])} {self._esc(metadata['trade_date'])}</title>
   <style>
     :root {{
       --bg: #f3ede3;
@@ -987,17 +993,17 @@ class DailyReportGenerator:
     <section class="hero">
       <div class="hero-grid">
         <div>
-          <div class="eyebrow">Strategic Market Dashboard</div>
+          <div class="eyebrow">{self._esc(self.presentation['html']['hero']['eyebrow'])}</div>
           <h1>市场观察日报</h1>
           <div class="hero-sub">
-            <strong>{self._esc(metadata['trade_date'])}</strong> 聚焦当天最值得先看懂的盘面结构：指数温度、情绪强弱、主线板块与核心标的，把分散信息压缩成一张可以直接用于复盘和次日盯盘的决策面板。
+            {self._esc(self.presentation['html']['hero']['body_template'].format(trade_date=metadata['trade_date']))}
           </div>
           <div class="hero-pill-row">{index_chips_html}</div>
         </div>
         <aside class="hero-rail">
-          <div class="hero-rail-title">本页聚焦</div>
+          <div class="hero-rail-title">{self._esc(self.presentation['html']['hero']['focus_title'])}</div>
           <div class="hero-gauge-grid">{hero_gauges_html}</div>
-          <div class="hero-rail-subtitle">核心标的 3 只</div>
+          <div class="hero-rail-subtitle">{self._esc(self.presentation['html']['hero']['core_targets_title'])}</div>
           <ul class="hero-core-list">{hero_core_targets_html}</ul>
         </aside>
       </div>
@@ -1005,7 +1011,7 @@ class DailyReportGenerator:
 
     <section class="section" id="market-overview">
       <div class="section-title">
-        <h2>市场总览</h2>
+        <h2>{self._esc(self.presentation['html']['sections']['market_overview'])}</h2>
         <span>生成时间 {self._esc(metadata['generated_at'])}</span>
       </div>
       <div class="metric-grid">
@@ -1015,7 +1021,7 @@ class DailyReportGenerator:
 
     <section class="section" id="observation-pool">
       <div class="section-title">
-        <h2>核心标的矩阵</h2>
+        <h2>{self._esc(self.presentation['html']['sections']['observation_pool'])}</h2>
         <span></span>
       </div>
       <div class="pool-grid">
@@ -1025,7 +1031,7 @@ class DailyReportGenerator:
 
     <section class="section" id="top-boards">
       <div class="section-title">
-        <h2>主线板块</h2>
+        <h2>{self._esc(self.presentation['html']['sections']['top_boards'])}</h2>
         <span>强度排序与阶段定位</span>
       </div>
       <div class="table-wrap">
@@ -1051,7 +1057,7 @@ class DailyReportGenerator:
 
     <section class="section" id="backup-pool">
       <div class="section-title">
-        <h2>备选池</h2>
+        <h2>{self._esc(self.presentation['html']['sections']['backup_pool'])}</h2>
         <span>二级预案与轮动补位</span>
       </div>
       <ul class="backup-list">
@@ -1100,20 +1106,22 @@ class DailyReportGenerator:
 </html>"""
 
     def _role_label(self, role_tag: Any) -> str:
-        mapping = {
-            "dragon": "龙头",
-            "center": "中军",
-            "follow": "扩散",
-            "watchlist": "观察补位",
-        }
         value = str(role_tag or "").strip()
-        return mapping.get(value, value or "-")
+        return self.role_labels.get(value, value or "-")
+
+    def _top_boards_limit(self) -> int:
+        title = str(self.presentation["markdown"]["top_boards"])
+        suffix = title.rsplit(" ", 1)
+        if len(suffix) == 2 and suffix[1].isdigit():
+            return int(suffix[1])
+        return 10
 
     def _build_index_chips(self, market_summary: Dict[str, Any]) -> str:
+        labels = self.presentation["html"]["labels"]
         items = [
-            ("上证", market_summary.get("sh_index_pct")),
-            ("深成", market_summary.get("sz_index_pct")),
-            ("创业板", market_summary.get("cyb_index_pct")),
+            (labels["index_sh"], market_summary.get("sh_index_pct")),
+            (labels["index_sz"], market_summary.get("sz_index_pct")),
+            (labels["index_cyb"], market_summary.get("cyb_index_pct")),
         ]
         return "\n".join(
             f'<span class="hero-pill"><strong>{label}</strong><span class="{self._pct_class(value)}">{self._fmt_number(value, suffix="%")}</span></span>'
@@ -1123,9 +1131,10 @@ class DailyReportGenerator:
     def _build_hero_gauges(self, market_summary: Dict[str, Any]) -> str:
         breadth_ratio = self._compute_breadth_ratio(market_summary)
         emotion_score = self._compute_emotion_score(market_summary)
+        labels = self.presentation["html"]["labels"]
         gauges = [
-            ("大盘", breadth_ratio, f"{self._fmt_number(market_summary.get('up_count'))} / {self._fmt_number(market_summary.get('down_count'))}"),
-            ("情绪", emotion_score, f"涨停 {self._fmt_number(market_summary.get('limit_up_count'))} · 连板 {self._fmt_number(market_summary.get('highest_streak'))}"),
+            (labels["gauge_market"], breadth_ratio, f"{self._fmt_number(market_summary.get('up_count'))} / {self._fmt_number(market_summary.get('down_count'))}"),
+            (labels["gauge_emotion"], emotion_score, f"涨停 {self._fmt_number(market_summary.get('limit_up_count'))} · 连板 {self._fmt_number(market_summary.get('highest_streak'))}"),
         ]
         return "\n".join(
             f"""
@@ -1171,15 +1180,15 @@ class DailyReportGenerator:
                 <div class="pool-symbol">{self._esc(row['symbol'])}</div>
               </div>
               <div class="score-badge">
-                <span>总分</span>
+                <span>{self._esc(self.presentation['html']['labels']['summary_score'])}</span>
                 <strong>{self._fmt_number(row.get('final_score'))}</strong>
               </div>
             </div>
             <div class="pool-meta">
               <span class="chip chip-role chip-{self._esc(role_tag)}">{self._role_label(role_tag)}</span>
               <span class="chip chip-board">{self._esc(row.get('board_name'))}</span>
-              <span class="chip">板块排 {self._fmt_number(row.get('board_rank'))}</span>
-              <span class="chip">股票排 {self._fmt_number(row.get('stock_rank'))}</span>
+              <span class="chip">{self._esc(self.presentation['html']['labels']['board_rank'])} {self._fmt_number(row.get('board_rank'))}</span>
+              <span class="chip">{self._esc(self.presentation['html']['labels']['stock_rank'])} {self._fmt_number(row.get('stock_rank'))}</span>
             </div>
           </button>
         </article>
@@ -1206,17 +1215,17 @@ class DailyReportGenerator:
                 <div class="modal-body">
                   <div class="modal-grid">
                     <div class="modal-metric">
-                      <span>综合评分</span>
+                      <span>{self._esc(self.presentation['html']['labels']['summary_score'])}</span>
                       <strong>{self._fmt_number(row.get('final_score'))}</strong>
                     </div>
                     <div class="modal-metric">
                       <span>板块 / 股票排序</span>
-                      <strong>板块排 {self._fmt_number(row.get('board_rank'))} · 股票排 {self._fmt_number(row.get('stock_rank'))}</strong>
+                      <strong>{self._esc(self.presentation['html']['labels']['board_rank'])} {self._fmt_number(row.get('board_rank'))} · {self._esc(self.presentation['html']['labels']['stock_rank'])} {self._fmt_number(row.get('stock_rank'))}</strong>
                     </div>
                   </div>
-                  <div><strong>入选逻辑</strong><br>{self._esc(row.get('selected_reason'))}</div>
-                  <div><strong>重点盯盘</strong><br>{self._esc(row.get('watch_points'))}</div>
-                  <div><strong>风险提示</strong><br>{self._esc(row.get('risk_flags'))}</div>
+                  <div><strong>{self._esc(self.presentation['html']['labels']['modal_selected_reason'])}</strong><br>{self._esc(row.get('selected_reason'))}</div>
+                  <div><strong>{self._esc(self.presentation['html']['labels']['modal_watch_points'])}</strong><br>{self._esc(row.get('watch_points'))}</div>
+                  <div><strong>{self._esc(self.presentation['html']['labels']['modal_risk_flags'])}</strong><br>{self._esc(row.get('risk_flags'))}</div>
                 </div>
               </div>
             </div>

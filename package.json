@@ -1,0 +1,19 @@
+{
+  "name": "fincrawlerai",
+  "version": "1.0.0",
+  "description": "当前项目已经收敛成一套可用的 **A 股日频市场观察系统**。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@fission-ai/openspec": "^1.3.0"
+  }
+}
