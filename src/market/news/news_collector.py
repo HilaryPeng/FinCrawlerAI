@@ -186,7 +186,7 @@ class NewsCollector:
             tag = tag.strip()
             if (
                 len(tag) >= 2
-                and tag not in {"异动解析", "财联社", "韭研公社"}
+                and tag not in {"异动解析", "财联社", "韭研公社", "韭菜公社"}
                 and tag != stock_name
                 and tag != stock_code
                 and not tag.isdigit()

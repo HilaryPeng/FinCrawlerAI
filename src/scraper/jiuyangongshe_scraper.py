@@ -1,4 +1,4 @@
-"""Jiuyangongshe (韭研公社/韭菜公社) scraper.
+"""Jiuyangongshe (韭菜公社) scraper.
 
 Features:
 - Scrape daily "异动解析" from /action/YYYY-MM-DD by parsing SSR Nuxt state.
@@ -139,20 +139,20 @@ class JiuyangongsheScraper:
                 self.login_auto()
             except Exception as exc:
                 raise RuntimeError(
-                    "Jiuyangongshe action details require login; set config/local_settings.py or env JYGS_PHONE/JYGS_PASSWORD"
+                    "JYGS action details require login; set config/local_settings.py or env JYGS_PHONE/JYGS_PASSWORD"
                 ) from exc
 
         count_res = self._api_post_json("/api/v1/action/count-pc", {"date": date})
         if str(count_res.get("errCode")) != "0":
             raise RuntimeError(
-                f"Jiuyangongshe action count failed: errCode={count_res.get('errCode')}, msg={count_res.get('msg')}"
+                f"JYGS action count failed: errCode={count_res.get('errCode')}, msg={count_res.get('msg')}"
             )
         api_date = (count_res.get("data") or {}).get("date") or date
 
         field_res = self._api_post_json("/api/v1/action/field", {"date": api_date, "pc": 1})
         if str(field_res.get("errCode")) != "0":
             raise RuntimeError(
-                f"Jiuyangongshe action field failed: errCode={field_res.get('errCode')}, msg={field_res.get('msg')}"
+                f"JYGS action field failed: errCode={field_res.get('errCode')}, msg={field_res.get('msg')}"
             )
         field_list = field_res.get("data") or []
 
@@ -221,11 +221,11 @@ class JiuyangongsheScraper:
 
         err = data.get("errCode")
         if str(err) != "0":
-            raise RuntimeError(f"Jiuyangongshe login failed: errCode={err}, msg={data.get('msg')}")
+            raise RuntimeError(f"JYGS login failed: errCode={err}, msg={data.get('msg')}")
 
         session_token = (data.get("data") or {}).get("sessionToken")
         if not session_token:
-            raise RuntimeError("Jiuyangongshe login missing sessionToken")
+            raise RuntimeError("JYGS login missing sessionToken")
 
         self._session_token = str(session_token)
         # Mirror site behavior: cookie name SESSION
@@ -278,11 +278,18 @@ class JiuyangongsheScraper:
 
         expr = m.group(1)
         node_src = (
+            "const fs = require('fs');\n"
             "global.window={};\n"
-            f"window.__NUXT__={expr};\n"
+            "const expr = fs.readFileSync(0, 'utf8');\n"
+            "eval('window.__NUXT__=' + expr);\n"
             "console.log(JSON.stringify(window.__NUXT__));\n"
         )
-        res = subprocess.run(["node", "-e", node_src], capture_output=True, text=True)
+        res = subprocess.run(
+            ["node", "-e", node_src],
+            input=expr,
+            capture_output=True,
+            text=True,
+        )
         if res.returncode != 0:
             raise RuntimeError(f"Node eval failed: {res.stderr.strip()[:500]}")
         try:
@@ -372,7 +379,7 @@ class JiuyangongsheScraper:
             "content": content,
             "publish_time": publish_time,
             "publish_ts": publish_ts,
-            "source": "韭研公社",
+            "source": "韭菜公社",
             "url": url,
             "tags": tags,
             "symbols": explicit_symbols,

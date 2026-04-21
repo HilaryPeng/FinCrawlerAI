@@ -4,7 +4,7 @@ Collect daily market news into the market_daily database.
 
 Sources:
 - Cailian telegraph news for the given day
-- Jiuyangongshe action/limit-up style analysis for the given day
+- JYGS (韭菜公社) action/limit-up style analysis for the given day
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def collect_market_news(trade_date: str, sources: set[str] | None = None) -> dic
     if "jygs" in requested_sources:
         step = requested_order.index("jygs") + 1
         total_steps = len(requested_order)
-        print(f"[{step}/{total_steps}] Collecting Jiuyangongshe action news...", flush=True)
+        print(f"[{step}/{total_steps}] Collecting JYGS (韭菜公社) action news...", flush=True)
         try:
             jygs = JiuyangongsheScraper(config)
             jygs_news = jygs.scrape_action_as_news(trade_date)

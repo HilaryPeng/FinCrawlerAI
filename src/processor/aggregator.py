@@ -361,7 +361,7 @@ class DataAggregator:
             score += add
             reasons.append(f"公司/资本市场信号({','.join(sorted(set(hit_corp))[:6])})+{add}")
 
-        # 价格/情绪线索（韭研公社更常见）
+        # 价格/情绪线索（韭菜公社更常见）
         if any(k in text for k in ["涨停", "跌停", "连板", "封板", "高度"]):
             score += 4
             reasons.append("价格/情绪线索（涨停/连板等）+4")

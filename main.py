@@ -167,8 +167,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # 财联社
     subparsers.add_parser("cailian", help="Run Cailian (财联社) crawler")
 
-    # 韭研公社
-    jygs = subparsers.add_parser("jygs", help="Run Jiuyangongshe (韭研公社) crawler")
+    # 韭菜公社
+    jygs = subparsers.add_parser("jygs", help="Run JYGS (韭菜公社) crawler")
     jygs.add_argument(
         "--action-date",
         default=None,
@@ -190,7 +190,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     all_parser.add_argument(
         "--jygs-action-date",
         default=None,
-        help="Use specified date for Jiuyangongshe action (YYYY-MM-DD)",
+        help="Use specified date for JYGS action (YYYY-MM-DD)",
     )
 
     # 只收集
@@ -198,13 +198,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     collect_parser.add_argument(
         "--jygs-action-date",
         default=None,
-        help="Use specified date for Jiuyangongshe action (YYYY-MM-DD)",
+        help="Use specified date for JYGS action (YYYY-MM-DD)",
     )
 
     # 通知（只推送，不抓取）
     notify_parser = subparsers.add_parser("notify", help="Send Feishu notifications from latest outputs")
     notify_parser.add_argument("--cailian-file", default=None, help="Use specific Cailian Markdown file")
-    notify_parser.add_argument("--jygs-file", default=None, help="Use specific Jiuyangongshe Markdown file")
+    notify_parser.add_argument("--jygs-file", default=None, help="Use specific JYGS Markdown file")
     notify_parser.add_argument("--title", default=None, help="Custom message title")
 
     # 导出（打包给 GPT）
@@ -317,11 +317,11 @@ def export_gpt_packet(config, args: argparse.Namespace) -> str:
 
     add_section("Run Report（健康报告）", run_report_path)
     add_section("财联社（摘要）", cailian_summary_path)
-    add_section("韭研公社（摘要）", jygs_summary_path)
+    add_section("韭菜公社（摘要）", jygs_summary_path)
 
     if getattr(args, "include_full", False):
         add_section("财联社（全量，截断）", cailian_full_path, truncate=True)
-        add_section("韭研公社（全量，截断）", jygs_full_path, truncate=True)
+        add_section("韭菜公社（全量，截断）", jygs_full_path, truncate=True)
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
     return str(out_path)
@@ -362,12 +362,12 @@ def main():
 
         elif args.command == "jygs":
             s_started = time.perf_counter()
-            source_report = {"name": "韭研公社", "status": "ok", "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
+            source_report = {"name": "韭菜公社", "status": "ok", "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
             jygs_scraper = JiuyangongsheScraper(config)
 
             # 关注的人（单独落盘）
             if args.focus:
-                print("👥 正在抓取韭研公社关注的人...")
+                print("👥 正在抓取韭菜公社关注的人...")
                 jygs_scraper.login_auto()
                 follow_users = jygs_scraper.scrape_follow_users(limit=500, start=1)
 
@@ -375,7 +375,7 @@ def main():
                 out_path = config.PROCESSED_DATA_DIR / f"jiuyangongshe_follow_users_{ts_label}.md"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 lines = [
-                    "# 韭研公社关注的人列表",
+                    "# 韭菜公社关注的人列表",
                     "",
                     f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     f"总数: {len(follow_users)}",
@@ -394,11 +394,11 @@ def main():
 
             # 异动解析（用于生成 Markdown）
             if args.action_date:
-                print(f"📡 正在抓取韭研公社异动解析: {args.action_date}...")
+                print(f"📡 正在抓取韭菜公社异动解析: {args.action_date}...")
                 raw_news = jygs_scraper.scrape_action_as_news(args.action_date)
                 source_report["fetched"] = len(raw_news)
                 source_report["http"] = jygs_scraper.http_stats()
-                print(f"✅ 成功抓取 {len(raw_news)} 条韭研公社异动解析")
+                print(f"✅ 成功抓取 {len(raw_news)} 条韭菜公社异动解析")
             else:
                 # 仅抓关注的人时，不走聚合输出
                 raw_news = []
@@ -459,15 +459,15 @@ def main():
             s_rep["elapsed_seconds"] = round(time.perf_counter() - s_started, 2)
             per_sources.append(s_rep)
 
-            # 韭研公社异动解析
+            # 韭菜公社异动解析
             try:
                 s_started = time.perf_counter()
                 jygs_scraper = JiuyangongsheScraper(config)
                 action_date = args.jygs_action_date or datetime.now().strftime("%Y-%m-%d")
-                print(f"📡 正在抓取韭研公社异动解析: {action_date}...")
+                print(f"📡 正在抓取韭菜公社异动解析: {action_date}...")
                 jygs_news = jygs_scraper.scrape_action_as_news(action_date)
-                print(f"✅ 成功抓取 {len(jygs_news)} 条韭研公社异动解析")
-                s_rep = {"name": "韭研公社", "status": "ok", "fetched": len(jygs_news), "cleaned": 0, "events": 0, "outputs": {}}
+                print(f"✅ 成功抓取 {len(jygs_news)} 条韭菜公社异动解析")
+                s_rep = {"name": "韭菜公社", "status": "ok", "fetched": len(jygs_news), "cleaned": 0, "events": 0, "outputs": {}}
                 s_rep["http"] = jygs_scraper.http_stats()
                 if jygs_news:
                     cleaned = cleaner.clean_news(jygs_news)
@@ -477,7 +477,7 @@ def main():
                     s_rep["time_range"] = (aggregated.get("summary", {}) or {}).get("time_range")
                     date_label = (action_date or "").replace("-", "")
                     prefix = f"jiuyangongshe_action_{date_label}" if date_label else "jiuyangongshe_action"
-                    report_title = f"# 韭研公社异动解析研究简报（{action_date}）"
+                    report_title = f"# 韭菜公社异动解析研究简报（{action_date}）"
                     markdown_path = markdown_gen.generate(
                         aggregated,
                         filename_prefix=prefix,
@@ -486,15 +486,15 @@ def main():
                     summary_path = markdown_gen.generate_summary(
                         aggregated,
                         filename_prefix=prefix,
-                        report_title=f"# 韭研公社异动解析简报（摘要）（{action_date}）",
+                        report_title=f"# 韭菜公社异动解析简报（摘要）（{action_date}）",
                         source_type="jygs",
                     )
                     s_rep["outputs"] = {"summary": summary_path, "full": markdown_path}
                     if args.command == "all" and args.notify:
-                        source_sections.append(("韭研公社", summary_path, markdown_path))
+                        source_sections.append(("韭菜公社", summary_path, markdown_path))
             except Exception as exc:
-                errors.append(f"韭研公社抓取失败: {exc}")
-                s_rep = {"name": "韭研公社", "status": "error", "error": str(exc), "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
+                errors.append(f"韭菜公社抓取失败: {exc}")
+                s_rep = {"name": "韭菜公社", "status": "error", "error": str(exc), "fetched": 0, "cleaned": 0, "events": 0, "outputs": {}}
             s_rep["elapsed_seconds"] = round(time.perf_counter() - s_started, 2)
             per_sources.append(s_rep)
 
@@ -576,9 +576,9 @@ def main():
             jygs_summary = resolve_file(args.jygs_file, "jiuyangongshe_action", summary=True)
             jygs_full = resolve_file(args.jygs_file, "jiuyangongshe_action", summary=False)
             if jygs_summary and jygs_full:
-                paths.append(("韭研公社", jygs_summary, jygs_full))
+                paths.append(("韭菜公社", jygs_summary, jygs_full))
             else:
-                errors.append("未找到韭研公社Markdown输出文件")
+                errors.append("未找到韭菜公社 Markdown 输出文件")
 
             if paths:
                 notifier = FeishuNotifier(config)
@@ -625,7 +625,7 @@ def main():
         if args.command == "jygs":
             date_label = (args.action_date or "").replace("-", "")
             prefix = f"jiuyangongshe_action_{date_label}" if date_label else "jiuyangongshe_action"
-            report_title = f"# 韭研公社异动解析研究简报（{args.action_date}）" if args.action_date else "# 韭研公社异动解析研究简报"
+            report_title = f"# 韭菜公社异动解析研究简报（{args.action_date}）" if args.action_date else "# 韭菜公社异动解析研究简报"
 
             markdown_file = markdown_gen.generate(
                 aggregated_data,
@@ -635,7 +635,7 @@ def main():
             summary_file = markdown_gen.generate_summary(
                 aggregated_data,
                 filename_prefix=prefix,
-                report_title=f"# 韭研公社异动解析简报（摘要）（{args.action_date}）" if args.action_date else "# 韭研公社异动解析简报（摘要）",
+                report_title=f"# 韭菜公社异动解析简报（摘要）（{args.action_date}）" if args.action_date else "# 韭菜公社异动解析简报（摘要）",
                 source_type="jygs",
             )
         else:
