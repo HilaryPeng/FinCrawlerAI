@@ -19,6 +19,7 @@ from src.market.collectors import (
     BoardsCollector,
     LimitUpCollector,
     MarketBreadthCollector,
+    AttentionCollector,
 )
 from src.market.quality import DataQualityChecker
 from collect_market_news import collect_market_news
@@ -29,6 +30,7 @@ def collect_market_data(
     db_path: Path = None,
     with_news: bool = False,
     news_sources: set[str] | None = None,
+    with_attention: bool = False,
 ) -> dict:
     """
     Collect all market data for a given trade date.
@@ -55,6 +57,7 @@ def collect_market_data(
         "limit_ups": 0,
         "market_breadth": 0,
         "news_total": 0,
+        "attention": 0,
     }
     
     print(f"\n{'='*50}", flush=True)
@@ -84,9 +87,14 @@ def collect_market_data(
     results["market_breadth"] = breadth_count
 
     if with_news:
-        print("[news] Collecting Cailian / JYGS news...", flush=True)
+        print("[news] Collecting Cailian / 韭菜公社 news...", flush=True)
         news_results = collect_market_news(trade_date, news_sources or {"cailian", "jygs"})
         results["news_total"] = news_results["counts"]["total"]
+
+    if with_attention:
+        print("[attention] Collecting EM/Xueqiu/THS screeners...", flush=True)
+        attention_count = AttentionCollector(db).collect(trade_date)
+        results["attention"] = attention_count
     
     print(f"\n{'='*50}", flush=True)
     print(f"Collection Summary for {trade_date}", flush=True)
@@ -97,6 +105,8 @@ def collect_market_data(
     print(f"  Market Breadth: {results['market_breadth']}", flush=True)
     if with_news:
         print(f"  News Total:     {results['news_total']}", flush=True)
+    if with_attention:
+        print(f"  Attention:      {results['attention']}", flush=True)
     quality = DataQualityChecker(db).check(trade_date)
     results["quality_status"] = quality["status"]
     print(
@@ -128,13 +138,18 @@ def main():
     parser.add_argument(
         "--with-news",
         action="store_true",
-        help="Also collect Cailian and Jiuyangongshe news into market_daily.db",
+        help="Also collect Cailian and JYGS (韭菜公社) news into market_daily.db",
     )
     parser.add_argument(
         "--news-sources",
         type=str,
         default="cailian,jygs",
         help="Comma-separated news sources for --with-news: cailian,jygs",
+    )
+    parser.add_argument(
+        "--with-attention",
+        action="store_true",
+        help="Also collect EM/Xueqiu/THS hot-rank and screener data",
     )
     args = parser.parse_args()
     
@@ -151,6 +166,7 @@ def main():
         db_path,
         with_news=args.with_news,
         news_sources=news_sources,
+        with_attention=args.with_attention,
     )
     
     total = sum(v for v in results.values() if isinstance(v, (int, float)))

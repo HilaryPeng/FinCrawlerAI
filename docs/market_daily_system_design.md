@@ -24,13 +24,11 @@
 当前项目已具备的能力：
 
 - 财联社抓取：`src/scraper/cailian_scraper.py`
-- 韭研公社抓取：`src/scraper/jiuyangongshe_scraper.py`
+- 韭菜公社抓取：`src/scraper/jiuyangongshe_scraper.py`
 - 新闻清洗：`src/processor/cleaner.py`
 - 新闻事件聚合：`src/processor/aggregator.py`
 - Markdown/JSON 输出：`src/output/`
 - 飞书推送：`src/notifier/`
-- 行情试验脚本：`scripts/akshare_mvp.py`
-- 韭研公社文本趋势分析脚本：`scripts/jygs_trend_report.py`
 
 V1 的实现方式不是推翻重做，而是新增一条链路：
 
@@ -98,7 +96,7 @@ V1 推荐：
 来源：
 
 - 财联社原始新闻
-- 韭研公社原始异动解析
+- 韭菜公社原始异动解析
 - AkShare/东方财富原始行情和板块接口响应
 
 落地方式：
@@ -157,7 +155,7 @@ V1 推荐：
 用途：
 
 - 存储标准化后的新闻条目
-- 承接财联社和韭研公社数据
+- 承接财联社和韭菜公社数据
 
 主要字段：
 
@@ -392,7 +390,7 @@ V1 推荐：
 | days_in_limit_up_last_20 | INTEGER | 近 20 日涨停次数 |
 | news_count | INTEGER | 新闻条数 |
 | cls_news_count | INTEGER | 财联社新闻数 |
-| jygs_news_count | INTEGER | 韭研公社提及数 |
+| jygs_news_count | INTEGER | 韭菜公社提及数 |
 | news_heat_score | REAL | 新闻热度分 |
 | board_score_ref | REAL | 所属板块参考分 |
 | dragon_score | REAL | 龙头候选分 |
@@ -534,7 +532,7 @@ V1 推荐：
 ### 7.1 第一步：采集原始数据
 
 - 抓取财联社新闻
-- 抓取韭研公社异动解析
+- 抓取韭菜公社异动解析
 - 抓取股票日行情
 - 抓取板块快照
 - 抓取涨停/炸板/连板数据
@@ -854,7 +852,7 @@ MVP 原则：
 MVP 只依赖以下数据：
 
 - 财联社新闻
-- 韭研公社异动解析
+- 韭菜公社异动解析
 - 股票日行情
 - 行业/概念板块快照
 - 涨停/连板基础数据
@@ -956,7 +954,7 @@ MVP 完成后，每天至少产出：
 范围：
 
 - 财联社
-- 韭研公社
+- 韭菜公社
 - 股票和题材映射
 
 建议文件：
@@ -977,7 +975,7 @@ MVP 完成后，每天至少产出：
 
 验收方式：
 
-- 任意抽查一条财联社和一条韭研公社记录，能关联到股票或题材
+- 任意抽查一条财联社和一条韭菜公社记录，能关联到股票或题材
 
 ## 阶段 D：基础特征构建
 
@@ -1169,7 +1167,7 @@ MVP 完成后，每天至少产出：
 
 输入：
 
-- 财联社/韭研公社抓取结果
+- 财联社/韭菜公社抓取结果
 - 数据库
 
 输出：

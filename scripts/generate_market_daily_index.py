@@ -104,7 +104,7 @@ def build_html(rows: list[dict]) -> str:
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>市场观察日报索引</title>
+  <title>市场观察日报</title>
   <style>
     :root {{
       --bg: #f4eee5;
@@ -263,8 +263,8 @@ def build_html(rows: list[dict]) -> str:
   <div class="wrap">
     <section class="hero">
       <div class="eyebrow">FinCrawlerAI / Market Daily</div>
-      <h1>市场观察日报索引</h1>
-      <p>集中浏览已生成的日报页面，按交易日回看市场阶段、主线板块与重点观察标的。首页会随最新生成结果刷新，这个索引用来保留历史入口。</p>
+      <h1>市场观察日报</h1>
+      <p>集中浏览已生成的日报页面，按交易日回看市场阶段、主线板块与重点观察标的。</p>
       <div class="meta">
         <span class="chip">日报数量 {len(rows)}</span>
         <span class="chip">最后生成 {escape(generated_at)}</span>
@@ -278,6 +278,19 @@ def build_html(rows: list[dict]) -> str:
 </body>
 </html>
 """
+
+
+def generate_index_page(
+    output_dir: str | Path = "data/processed/market_daily",
+    output_name: str = "market_daily_index.html",
+) -> Path:
+    output_dir_path = Path(output_dir).resolve()
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    rows = load_report_rows(output_dir_path)
+    html = build_html(rows)
+    output_path = output_dir_path / output_name
+    output_path.write_text(html, encoding="utf-8")
+    return output_path
 
 
 def main() -> int:
@@ -294,12 +307,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rows = load_report_rows(output_dir)
-    html = build_html(rows)
-    output_path = output_dir / args.output_name
-    output_path.write_text(html, encoding="utf-8")
+    output_path = generate_index_page(args.output_dir, args.output_name)
+    rows = load_report_rows(Path(args.output_dir).resolve())
     print(f"index_path={output_path}")
     print(f"report_count={len(rows)}")
     return 0

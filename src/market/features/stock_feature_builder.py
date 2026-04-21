@@ -43,6 +43,7 @@ class StockFeatureBuilder:
                 l.limit_up,
                 l.broken_limit,
                 l.limit_up_streak,
+                l.limit_reason,
                 m.board_name AS primary_board_name,
                 m.board_type AS primary_board_type,
                 bf.board_score AS board_score_ref,
@@ -109,10 +110,16 @@ class StockFeatureBuilder:
         limit_up = self._to_int(row.get("limit_up")) or 0
         broken_limit = self._to_int(row.get("broken_limit")) or 0
         limit_up_streak = self._to_int(row.get("limit_up_streak")) or 0
+        limit_reason = (row.get("limit_reason") or "").strip()
         board_score_ref = self._to_float(row.get("board_score_ref")) or 0.0
 
         days_in_limit_up_last_20 = self._count_limit_up_days(trade_date, symbol, 20)
         news_metrics = self._get_stock_news_metrics(trade_date, symbol)
+        attention_metrics = self._get_stock_attention_metrics(trade_date, symbol)
+        effective_limit_reason, effective_reason_source = self._resolve_effective_limit_reason(
+            base_limit_reason=limit_reason,
+            news_metrics=news_metrics,
+        )
         pct_chg_3d = self._get_window_return(trade_date, symbol, 3)
         pct_chg_5d = self._get_window_return(trade_date, symbol, 5)
         amount_rank_in_board = amount_rank_by_board.get((board_name or "", symbol), 0)
@@ -125,6 +132,7 @@ class StockFeatureBuilder:
             news_heat_score=news_metrics["news_heat_score"],
             jygs_signal_score=news_metrics["jygs_signal_score"],
             board_phase_hint=board_phase_hint,
+            attention_score=attention_metrics["attention_score"],
         )
         center_score = self._compute_center_score(
             pct_chg=pct_chg,
@@ -136,6 +144,8 @@ class StockFeatureBuilder:
             board_phase_hint=board_phase_hint,
             amount_rank_in_board=amount_rank_in_board,
             pct_chg_3d=pct_chg_3d,
+            attention_score=attention_metrics["attention_score"],
+            tech_bonus=attention_metrics["tech_bonus"],
         )
         follow_score = self._compute_follow_score(
             pct_chg=pct_chg,
@@ -145,6 +155,7 @@ class StockFeatureBuilder:
             board_phase_hint=board_phase_hint,
             limit_up=limit_up,
             jygs_signal_score=news_metrics["jygs_signal_score"],
+            attention_score=attention_metrics["attention_score"],
         )
         risk_flags = self._build_risk_flags(
             pct_chg=pct_chg,
@@ -189,6 +200,18 @@ class StockFeatureBuilder:
                 "jygs_signal_flags": news_metrics["jygs_signal_flags"],
                 "jygs_reason_summary": news_metrics["jygs_reason_summary"],
                 "jygs_theme_names": news_metrics["jygs_theme_names"],
+                "attention_score": attention_metrics["attention_score"],
+                "hot_rank_em": attention_metrics["hot_rank_em"],
+                "hot_up_rank_em": attention_metrics["hot_up_rank_em"],
+                "xq_follow_count": attention_metrics["xq_follow_count"],
+                "xq_tweet_count": attention_metrics["xq_tweet_count"],
+                "is_new_high_ths": attention_metrics["is_new_high_ths"],
+                "consecutive_up_days_ths": attention_metrics["consecutive_up_days_ths"],
+                "is_breakout_ths": attention_metrics["is_breakout_ths"],
+                "breakout_labels_ths": attention_metrics["breakout_labels_ths"],
+                "base_limit_reason": limit_reason,
+                "effective_limit_reason": effective_limit_reason,
+                "effective_reason_source": effective_reason_source,
             },
             ensure_ascii=False,
         )
@@ -317,6 +340,120 @@ class StockFeatureBuilder:
             "jygs_theme_names": jygs_detail["theme_names"],
         }
 
+    def _resolve_effective_limit_reason(
+        self,
+        base_limit_reason: str,
+        news_metrics: Dict[str, Any],
+    ) -> Tuple[str, str]:
+        jygs_reason = (news_metrics.get("jygs_reason_summary") or "").strip()
+        jygs_themes = news_metrics.get("jygs_theme_names") or []
+        if jygs_reason:
+            return jygs_reason, "jygs_expound"
+        if jygs_themes:
+            return " / ".join(jygs_themes[:3]), "jygs_theme"
+        if base_limit_reason:
+            return base_limit_reason, "limit_reason"
+        return "", ""
+
+    def _get_stock_attention_metrics(self, trade_date: str, symbol: str) -> Dict[str, Any]:
+        rows = self.db.fetchall(
+            """
+            SELECT source, metric_type, rank_value, metric_value, pct_chg, extra_json
+            FROM daily_stock_attention
+            WHERE trade_date = ?
+              AND symbol = ?
+            """,
+            (trade_date, symbol),
+        )
+        if not rows:
+            return {
+                "attention_score": 0.0,
+                "tech_bonus": 0.0,
+                "hot_rank_em": None,
+                "hot_up_rank_em": None,
+                "xq_follow_count": None,
+                "xq_tweet_count": None,
+                "is_new_high_ths": 0,
+                "consecutive_up_days_ths": 0,
+                "is_breakout_ths": 0,
+                "breakout_labels_ths": [],
+            }
+
+        hot_rank_em = None
+        hot_up_rank_em = None
+        xq_follow_count = None
+        xq_tweet_count = None
+        is_new_high_ths = 0
+        consecutive_up_days_ths = 0
+        is_breakout_ths = 0
+        breakout_labels: List[str] = []
+
+        for row in rows:
+            metric_type = row["metric_type"] or ""
+            rank_value = self._to_float(row["rank_value"])
+            metric_value = self._to_float(row["metric_value"])
+            extra = {}
+            try:
+                extra = json.loads(row["extra_json"]) if row["extra_json"] else {}
+            except Exception:
+                extra = {}
+
+            if metric_type == "hot_rank":
+                hot_rank_em = rank_value
+            elif metric_type == "hot_up":
+                hot_up_rank_em = rank_value
+            elif metric_type == "follow_rank":
+                xq_follow_count = metric_value
+            elif metric_type == "tweet_rank":
+                xq_tweet_count = metric_value
+            elif metric_type == "ths_new_high":
+                is_new_high_ths = 1
+            elif metric_type == "ths_consecutive_up":
+                consecutive_up_days_ths = max(
+                    consecutive_up_days_ths,
+                    int(self._to_float(extra.get("连涨天数")) or 0),
+                )
+            elif metric_type.startswith("ths_breakout_"):
+                is_breakout_ths = 1
+                breakout_labels.append(metric_type.replace("ths_breakout_", ""))
+
+        attention_score = 0.0
+        if hot_rank_em:
+            attention_score += max(28.0 - hot_rank_em * 0.18, 0.0)
+        if hot_up_rank_em:
+            attention_score += max(20.0 - hot_up_rank_em * 0.08, 0.0)
+        if xq_follow_count:
+            attention_score += min(xq_follow_count / 300000.0, 16.0)
+        if xq_tweet_count:
+            attention_score += min(xq_tweet_count / 80000.0, 16.0)
+        if is_new_high_ths:
+            attention_score += 14.0
+        if consecutive_up_days_ths:
+            attention_score += min(consecutive_up_days_ths * 2.2, 12.0)
+        if is_breakout_ths:
+            attention_score += 10.0
+
+        tech_bonus = 0.0
+        if is_new_high_ths:
+            tech_bonus += 10.0
+        if is_breakout_ths:
+            tech_bonus += 8.0
+        if consecutive_up_days_ths >= 3:
+            tech_bonus += min(consecutive_up_days_ths * 1.5, 8.0)
+
+        return {
+            "attention_score": round(min(attention_score, 100.0), 2),
+            "tech_bonus": round(min(tech_bonus, 30.0), 2),
+            "hot_rank_em": int(hot_rank_em) if hot_rank_em else None,
+            "hot_up_rank_em": int(hot_up_rank_em) if hot_up_rank_em else None,
+            "xq_follow_count": int(xq_follow_count) if xq_follow_count else None,
+            "xq_tweet_count": int(xq_tweet_count) if xq_tweet_count else None,
+            "is_new_high_ths": is_new_high_ths,
+            "consecutive_up_days_ths": consecutive_up_days_ths,
+            "is_breakout_ths": is_breakout_ths,
+            "breakout_labels_ths": list(dict.fromkeys(breakout_labels)),
+        }
+
     def _get_jygs_signal_details(self, trade_date: str, symbol: str) -> Dict[str, Any]:
         start_ts, end_ts = self._day_ts_range(trade_date)
         rows = self.db.fetchall(
@@ -429,6 +566,7 @@ class StockFeatureBuilder:
         news_heat_score: float,
         jygs_signal_score: float,
         board_phase_hint: str | None,
+        attention_score: float,
     ) -> float:
         score = max(pct_chg * 4, 0.0)
         score += limit_up * 25
@@ -436,6 +574,7 @@ class StockFeatureBuilder:
         score += board_score_ref * 0.25
         score += news_heat_score * 0.1
         score += jygs_signal_score * 0.12
+        score += attention_score * 0.12
         if board_phase_hint == "fade":
             score *= 0.55
         elif board_phase_hint == "start":
@@ -455,6 +594,8 @@ class StockFeatureBuilder:
         board_phase_hint: str | None,
         amount_rank_in_board: int,
         pct_chg_3d: float | None,
+        attention_score: float,
+        tech_bonus: float,
     ) -> float:
         amount_score = min(amount / 2_000_000_000, 45.0)
         mv_score = 0.0
@@ -473,6 +614,8 @@ class StockFeatureBuilder:
             + board_score_ref * 0.15
             + news_heat_score * 0.05
             + jygs_signal_score * 0.04
+            + attention_score * 0.06
+            + tech_bonus
         )
         if board_phase_hint == "fade":
             score *= 0.72
@@ -489,6 +632,7 @@ class StockFeatureBuilder:
         board_phase_hint: str | None,
         limit_up: int,
         jygs_signal_score: float,
+        attention_score: float,
     ) -> float:
         recent_momentum = pct_chg_3d or 0.0
         freshness_bonus = max(12 - days_in_limit_up_last_20 * 2, 0.0)
@@ -498,6 +642,7 @@ class StockFeatureBuilder:
             + max(recent_momentum * 1.5, 0.0)
             + freshness_bonus
             + jygs_signal_score * 0.08
+            + attention_score * 0.08
         )
         if limit_up:
             score += 8

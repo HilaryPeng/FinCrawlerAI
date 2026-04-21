@@ -152,6 +152,26 @@ TABLE_SCHEMAS = {
             created_at TEXT NOT NULL
         );
     """,
+
+    "daily_stock_attention": """
+        CREATE TABLE IF NOT EXISTS daily_stock_attention (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_date TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT,
+            source TEXT NOT NULL,
+            metric_type TEXT NOT NULL,
+            rank_value REAL,
+            metric_value REAL,
+            pct_chg REAL,
+            extra_json TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(trade_date, symbol, source, metric_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_attention_date ON daily_stock_attention(trade_date);
+        CREATE INDEX IF NOT EXISTS idx_stock_attention_symbol ON daily_stock_attention(symbol);
+        CREATE INDEX IF NOT EXISTS idx_stock_attention_metric ON daily_stock_attention(metric_type);
+    """,
     
     # Feature tables
     "daily_stock_features": """

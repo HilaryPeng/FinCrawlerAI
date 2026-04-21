@@ -59,8 +59,10 @@ class CailianScraper:
     def _fetch_from_web(self) -> List[Dict]:
         """从网页抓取新闻"""
         try:
-            url = self.config.CAILIAN_BASE_URL
-            resp = self.http.get(url)
+            url = f"{self.config.CAILIAN_BASE_URL}/telegraph"
+            headers = dict(self.config.REQUEST_HEADERS)
+            headers["Referer"] = self.config.CAILIAN_BASE_URL + "/"
+            resp = self.http.get(url, headers=headers)
             soup = BeautifulSoup(resp.content, 'html.parser')
             return self._parse_web_content(soup)
             
@@ -285,7 +287,84 @@ class CailianScraper:
 
     def _parse_web_content(self, soup: BeautifulSoup) -> List[Dict]:
         """解析网页内容"""
+        telegraph_news = self._parse_telegraph_feed_page(soup)
+        if telegraph_news:
+            return telegraph_news
         return self._parse_telegraph_page(soup)
+
+    def _parse_telegraph_feed_page(self, soup: BeautifulSoup) -> List[Dict]:
+        """解析当前财联社电报页结构。"""
+        news_list: List[Dict] = []
+
+        try:
+            content_boxes = soup.select(".telegraph-content-box")
+            if not content_boxes:
+                return []
+
+            for box in content_boxes[:80]:
+                try:
+                    container = box.parent if box.parent else box
+
+                    time_elem = box.select_one(".telegraph-time-box")
+                    time_text = time_elem.get_text(strip=True) if time_elem else ""
+
+                    content_div = box.select_one(".c-34304b > div") or box.select_one("div")
+                    if not content_div:
+                        continue
+
+                    title_elem = content_div.find("strong")
+                    title_text = title_elem.get_text(strip=True) if title_elem else ""
+                    content_text = content_div.get_text(" ", strip=True)
+                    if not content_text:
+                        continue
+
+                    if not title_text:
+                        title_text = content_text[:50] + "..." if len(content_text) > 50 else content_text
+
+                    detail_link = None
+                    for anchor in container.select("a[href]"):
+                        href = anchor.get("href", "")
+                        if "/detail/" in href:
+                            detail_link = href
+                            break
+
+                    url = ""
+                    if detail_link:
+                        url = detail_link if detail_link.startswith("http") else f"{self.config.CAILIAN_BASE_URL}{detail_link}"
+
+                    tags = []
+                    for label in container.select(".label-item"):
+                        label_text = label.get_text(strip=True)
+                        if label_text:
+                            tags.append(label_text)
+
+                    for stock_link in container.select(".industry-stock a"):
+                        stock_text = stock_link.get_text(" ", strip=True)
+                        if stock_text:
+                            tags.append(stock_text)
+
+                    tags.extend(self._extract_tags(f"{title_text} {content_text}"))
+                    tags = list(dict.fromkeys([tag for tag in tags if tag]))
+
+                    news_item = {
+                        "title": title_text,
+                        "content": content_text,
+                        "publish_time": self._parse_time(time_text),
+                        "publish_ts": self._parse_time_to_ts(time_text),
+                        "source": "财联社",
+                        "url": url,
+                        "tags": tags,
+                    }
+                    news_list.append(news_item)
+
+                except Exception as e:
+                    print(f"解析电报页单个新闻项时出错: {e}")
+                    continue
+
+        except Exception as e:
+            print(f"解析财联社电报页时出错: {e}")
+
+        return news_list
     
     def _parse_time(self, time_str: str) -> str:
         """解析时间字符串"""

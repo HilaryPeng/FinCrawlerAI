@@ -1,178 +1,162 @@
-# 多源金融资讯自动化采集与分析
+# FinCrawlerAI
 
-用于自动化收集多平台金融资讯，完成清洗、聚合并推送到飞书，支持本地留存与定时调度。
+当前项目已经收敛成一套可用的 **A 股日频市场观察系统**。
 
-## 项目简介
+主链路：
 
-- 覆盖来源：财联社、韭研公社（可扩展其他平台）
-- 数据处理：清洗、聚合、去重
-- 输出形式：Markdown，适合阅读与二次处理
-- 推送能力：飞书群机器人（支持长消息拆分）
+- 采集市场数据
+- 入库到本地 SQLite
+- 构建板块 / 个股特征
+- 生成核心标的池
+- 生成 HTML 日报
+- 部署到服务器
+- 可选推送飞书
 
-## 架构概览
+数据库默认仍保留在本地机器，服务器主要用于：
 
-流程：采集 → 清洗 → 聚合 → 推送 → 存档
+- 托管 HTML 页面
+- 保留数据快照
+- 后续可切换为服务器本地定时跑
 
-- scraper：抓取多平台原始数据
-- processor：清洗与聚合
-- output：输出 Markdown
-- output：输出 Markdown
-- notifier：消息推送（飞书）
+## 1. 当前核心目录
 
-## 设计文档
-
-- 日频市场观察系统 V1 设计：`docs/market_daily_system_design.md`
-
-## 目录结构
-
-```
+```text
 FinCrawlerAI/
-├── src/
-│   ├── scraper/           # 抓取模块（财联社/韭研公社）
-│   ├── processor/         # 清洗与聚合
-│   ├── notifier/          # 飞书推送
-│   ├── output/            # 输出生成（Markdown）
-├── data/
-│   ├── raw/               # 原始数据
-│   └── processed/         # 处理后数据与分析结果
-├── logs/                  # 日志文件
 ├── config/
-│   ├── settings.py        # 默认配置
-│   └── local_settings.py  # 本地配置（不提交）
-├── main.py                # 主入口
-├── requirements.txt       # 依赖
-└── README.md
+├── data/
+│   ├── db/
+│   ├── processed/market_daily/
+│   └── raw/
+├── docs/
+├── logs/
+├── scripts/
+└── src/
 ```
 
-## 运行方式
+## 2. 最常用脚本
 
-安装依赖：
+### 2.1 初始化数据库
 
 ```bash
-pip install -r requirements.txt
+python scripts/init_market_db.py
 ```
 
-常用命令：
+### 2.2 采集当天市场数据
 
 ```bash
-# 只收集（不推送）
-python main.py collect
-
-# 只推送已有输出（不重新抓取，摘要+全量各一条）
-python main.py notify
-
-# 一键采集并推送原始汇总
-python main.py all --notify
-```
-
-单独抓取：
-
-```bash
-# 财联社
-python main.py cailian
-
-# 韭研公社异动解析（指定日期）
-python main.py jygs --action-date 2026-01-26
-```
-
-### 下载股票日线（关代理后运行）
-
-如果 AkShare 在代理环境下访问股票日线失败，可直接运行下面的脚本。脚本会在当前进程内清理常见代理环境变量，并全量下载股票日线到 SQLite。
-
-```bash
-python scripts/collect_quotes_only.py --date 2026-03-18
-```
-
-下载结果写入：
-
-```bash
-data/db/market_daily.db
-```
-
-### 入库财联社 / 韭菜公社新闻
-
-将财联社快讯和韭菜公社异动解析写入 `market_daily.db`，供 `daily_board_features` / `daily_stock_features` 聚合使用：
-
-```bash
-# 同时抓财联社与韭菜公社
-python scripts/collect_market_news.py --date 2026-03-19
-
-# 只抓韭菜公社涨停/异动解析
-python scripts/collect_market_news.py --date 2026-03-19 --sources jygs
+python scripts/collect_market_data.py --date 2026-03-31 --with-news --news-sources jygs --with-attention
 ```
 
 说明：
 
-- 韭菜公社会直接写入结构化 `symbols/themes`
-- `daily_stock_features` 会聚合 `jygs_news_count` 与 JYGS 信号摘要
-- `daily_board_features` 会把行业板块内被新闻提及的成员股计入新闻热度
-- 也可以直接并入市场采集主流程：
+- `--with-news`：采集新闻
+- `--news-sources jygs`：当前建议先用韭菜公社
+- `--with-attention`：采集热度 / 技术榜单
+
+### 2.3 补行业 membership
 
 ```bash
-python scripts/collect_market_data.py --date 2026-03-19 --with-news
+python scripts/collect_board_membership.py --date 2026-03-31 --source baostock
 ```
 
-### 生成日报并部署到服务器
-
-先生成日报页面：
+### 2.4 生成统一行业板块快照
 
 ```bash
-python scripts/generate_market_daily_report.py --date 2026-03-18
+python scripts/build_unified_board_quotes.py --date 2026-03-31
 ```
 
-如果服务器已安装并启用 `nginx`，可直接生成并部署 HTML 到远端 Web 目录：
+### 2.5 构建特征
+
+```bash
+python scripts/build_daily_features.py --date 2026-03-31
+```
+
+### 2.6 生成观察池
+
+```bash
+python scripts/build_observation_pool.py --date 2026-03-31
+```
+
+### 2.7 生成日报
+
+```bash
+python scripts/generate_market_daily_report.py --date 2026-03-31
+python scripts/generate_market_daily_index.py
+```
+
+## 3. 本地一键流程
+
+如果你还保持“本地跑数据库 + 服务器只展示页面”的模式，日常顺序是：
+
+```bash
+python scripts/collect_market_data.py --date 2026-03-31 --with-news --news-sources jygs --with-attention
+python scripts/collect_board_membership.py --date 2026-03-31 --source baostock
+python scripts/build_unified_board_quotes.py --date 2026-03-31
+python scripts/build_daily_features.py --date 2026-03-31
+python scripts/build_observation_pool.py --date 2026-03-31
+python scripts/generate_market_daily_report.py --date 2026-03-31
+python scripts/generate_market_daily_index.py
+```
+
+## 4. 部署 HTML 到服务器
 
 ```bash
 python scripts/deploy_market_daily_report.py \
-  --date 2026-03-18 \
+  --date 2026-03-31 \
   --host 167.179.78.250 \
   --user root \
   --publish-index
 ```
 
-说明：
+## 5. 同步本地数据到服务器
 
-- 脚本默认通过 `ssh/scp` 部署到远端
-- 默认暂存目录：`/root/market_daily`
-- 默认站点目录：`/var/www/html`
-- `--publish-index` 会同步更新远端 `/var/www/html/index.html`
-- 如果你已经本地生成过 HTML，也可以跳过生成阶段：
+如果数据库仍保留在本地，但你想把本地 `data/` 全量备份到服务器：
 
 ```bash
-python scripts/deploy_market_daily_report.py \
-  --date 2026-03-18 \
+python scripts/sync_market_data_snapshot.py \
   --host 167.179.78.250 \
-  --user root \
-  --skip-generate \
-  --html-path data/processed/market_daily/market_daily_20260318.html \
-  --publish-index
+  --user root
 ```
 
-## 数据与输出
+同步结果：
 
-输出目录：`data/processed`
+- 服务器保留时间戳快照
+- 同时更新一个 `latest` 软链
+- 本地数据不会删除
 
-- 财联社：`cailian_news_*.md`（全量） / `cailian_news_summary_*.md`（摘要）
-- 韭研公社：`jiuyangongshe_action_*.md`（全量） / `jiuyangongshe_action_*_summary_*.md`（摘要）
+## 6. 服务器本地日跑
 
-新闻条目结构（清洗后）：
+如果后面切换成“服务器自己每天跑”，直接用：
 
-```python
-{
-    "title": "新闻标题",
-    "content": "新闻内容",
-    "publish_time": "2024-01-26 10:30:00",
-    "source": "财联社",
-    "url": "新闻链接",
-    "tags": ["股票", "A股", "财经"]
-}
+```bash
+python scripts/run_market_daily_job.py \
+  --date 2026-03-31 \
+  --base-url http://你的服务器IP或域名 \
+  --with-news \
+  --news-sources jygs \
+  --with-attention \
+  --check-trade-date \
+  --notify-feishu
 ```
 
-## 配置与安全
+这条会：
 
-默认配置在 `config/settings.py`，本地密钥与账号建议放到 `config/local_settings.py`。
+- 检查是否 A 股交易日
+- 跑完整条市场链路
+- 发布到 nginx
+- 推送飞书
 
-示例：
+## 7. 推荐 cron
+
+每天晚上 21:00 运行，由脚本自己判断是不是 A 股开盘日：
+
+```cron
+0 21 * * * cd /opt/FinCrawlerAI && . .venv/bin/activate && python scripts/run_market_daily_job.py --date $(date +\%F) --base-url http://你的服务器IP或域名 --with-news --news-sources jygs --with-attention --check-trade-date --notify-feishu >> logs/server_daily_job.log 2>&1
+```
+
+## 8. 配置
+
+本地配置文件：
 
 ```python
 # config/local_settings.py
@@ -181,52 +165,20 @@ FEISHU_SECRET = ""
 
 JYGS_PHONE = "<YOUR_PHONE>"
 JYGS_PASSWORD = "<YOUR_PASSWORD>"
-# 用于部分需要签名的接口（如“关注的人”）；不要提交真实值到仓库
-JYGS_TOKEN_SEED_PREFIX = "<YOUR_TOKEN_SEED_PREFIX>"
+JYGS_TOKEN_SEED_PREFIX = ""
+
+SERVER_HOST_ALIAS = "fincrawler-vps"
+SERVER_HOST = "你的服务器IP"
+SERVER_SSH_USER = "root"
+SERVER_SSH_PORT = 22
+SERVER_BASE_URL = "http://你的服务器IP"
 ```
 
-注意：`config/local_settings.py` 已在 `.gitignore` 中，不会提交到仓库。
+## 9. 相关文档
 
-### 稳定性与排障（推荐）
-
-项目内置了两类“更稳”能力：
-
-- **HTTP 重试/退避**：对超时、连接错误、429、5xx 自动重试，并做指数退避。
-- **原始响应缓存**：把每次请求的响应保存到 `data/raw/http_cache/<source>/`，便于复现和排查站点结构变化（`data/` 已被 `.gitignore` 忽略）。
-
-可在 `config/local_settings.py` 调整（可选）：
-
-```python
-# HTTP 稳定性
-HTTP_MAX_RETRIES = 3
-HTTP_BACKOFF_BASE_SECONDS = 0.8
-HTTP_BACKOFF_CAP_SECONDS = 10.0
-
-# 原始响应缓存/回放（调试用）
-RAW_CACHE_ENABLED = True
-RAW_CACHE_REPLAY = False   # True 时优先读缓存，不走网络
-
-# 健康报告告警阈值（清洗保留率过低会提示）
-HEALTH_MIN_KEEP_RATIO = 0.5
-```
-
-另外也支持环境变量快速切换回放模式：
-
-- `RAW_CACHE_REPLAY=1`：开启回放
-- `RAW_CACHE_ENABLED=0`：关闭缓存
-
-## 定时调度示例（可选）
-
-```bash
-# 每 2 小时执行一次
-0 */2 * * * /usr/bin/python3 /path/to/FinCrawlerAI/main.py collect
-0 */2 * * * /usr/bin/python3 /path/to/FinCrawlerAI/main.py notify
-```
-
-## 推送格式说明
-
-- 每个来源推送两条：摘要 + 全量
-- 摘要用于快速浏览，全量用于完整阅读
-- 韭研公社摘要会突出连板/高度条目（用符号标记）
-
-本项目仅供个人学习研究使用，请遵守各平台使用条款。
+- 项目说明：`docs/project_overview.md`
+- 配置说明：`docs/configuration_guide.md`
+- 当前实现状态：`docs/market_daily_current_state.md`
+- 设计文档：`docs/market_daily_system_design.md`
+- 服务器部署：`docs/server_daily_run.md`
+- 本地开机自启：`docs/local_launchd_run.md`

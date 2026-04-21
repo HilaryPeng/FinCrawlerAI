@@ -244,14 +244,39 @@ class ObservationPoolSelector:
             jygs_themes = feature_data.get("jygs_theme_names") or []
             jygs_reason = feature_data.get("jygs_reason_summary") or ""
             jygs_signal_flags = feature_data.get("jygs_signal_flags") or []
+            effective_limit_reason = feature_data.get("effective_limit_reason") or ""
+            effective_reason_source = feature_data.get("effective_reason_source") or ""
             if jygs_themes:
                 parts.append(f"韭菜公社题材={','.join(jygs_themes[:3])}")
             if "core_signal" in jygs_signal_flags:
                 parts.append("韭菜公社=核心信号")
             elif "follow_signal" in jygs_signal_flags:
                 parts.append("韭菜公社=扩散信号")
+            if effective_limit_reason:
+                if effective_reason_source.startswith("jygs"):
+                    parts.append(f"涨停原因(韭菜公社)={effective_limit_reason[:60]}")
+                else:
+                    parts.append(f"涨停原因={effective_limit_reason[:60]}")
             if jygs_reason:
                 parts.append(f"异动逻辑={jygs_reason[:60]}")
+            hot_rank_em = feature_data.get("hot_rank_em")
+            hot_up_rank_em = feature_data.get("hot_up_rank_em")
+            attention_score = feature_data.get("attention_score")
+            is_new_high_ths = feature_data.get("is_new_high_ths")
+            consecutive_up_days_ths = feature_data.get("consecutive_up_days_ths")
+            breakout_labels = feature_data.get("breakout_labels_ths") or []
+            if hot_rank_em:
+                parts.append(f"东财热股排名={hot_rank_em}")
+            if hot_up_rank_em:
+                parts.append(f"东财飙升排名={hot_up_rank_em}")
+            if is_new_high_ths:
+                parts.append("THS=创新高")
+            if consecutive_up_days_ths:
+                parts.append(f"THS连涨={consecutive_up_days_ths}天")
+            if breakout_labels:
+                parts.append(f"THS突破={','.join(str(item) for item in breakout_labels[:2])}")
+            if attention_score:
+                parts.append(f"热度分={round(float(attention_score), 2)}")
         parts.append(f"总分={stock_row.get('final_score')}")
         return "；".join(parts)
 
@@ -277,10 +302,25 @@ class ObservationPoolSelector:
             except Exception:
                 feature_data = {}
             jygs_signal_flags = feature_data.get("jygs_signal_flags") or []
+            effective_reason_source = feature_data.get("effective_reason_source") or ""
             if "core_signal" in jygs_signal_flags:
                 points.append("结合韭菜公社核心信号看承接强度")
             if "risk_signal" in jygs_signal_flags:
                 points.append("韭菜公社提示博弈/分歧风险")
+            if effective_reason_source.startswith("jygs"):
+                points.append("优先按韭菜公社涨停逻辑跟踪是否兑现")
+            hot_rank_em = feature_data.get("hot_rank_em")
+            is_new_high_ths = feature_data.get("is_new_high_ths")
+            consecutive_up_days_ths = feature_data.get("consecutive_up_days_ths")
+            breakout_labels = feature_data.get("breakout_labels_ths") or []
+            if hot_rank_em and int(hot_rank_em) <= 20:
+                points.append("留意东财热股前排是否继续强化")
+            if is_new_high_ths:
+                points.append("观察创新高后是否继续放量承接")
+            if consecutive_up_days_ths and int(consecutive_up_days_ths) >= 3:
+                points.append("留意连续上涨后是否出现分歧")
+            if breakout_labels:
+                points.append("观察均线突破后的回踩确认")
         return "；".join(points)
 
     def _role_summary(self, records: List[Dict[str, Any]]) -> str:

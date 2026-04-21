@@ -364,6 +364,16 @@ class DailyMarketBreadthRepository(BaseRepository):
         super().__init__(db_connection, "daily_market_breadth")
 
 
+class DailyStockAttentionRepository(BaseRepository):
+    """Repository for daily_stock_attention table."""
+
+    def __init__(self, db_connection: DatabaseConnection):
+        super().__init__(db_connection, "daily_stock_attention")
+
+    def get_unique_keys(self) -> List[str]:
+        return ["trade_date", "symbol", "source", "metric_type"]
+
+
 class DailyStockFeaturesRepository(BaseRepository):
     """Repository for daily_stock_features table."""
     

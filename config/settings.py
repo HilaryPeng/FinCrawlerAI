@@ -76,16 +76,35 @@ class Config:
     ENABLE_SCHEDULED_RUNS = False
     SCHEDULE_INTERVAL = 3600  # 定时运行间隔（秒）
 
-    # 韭研公社（韭菜公社）登录（建议放到 config/local_settings.py 或环境变量）
+    # 韭菜公社登录（建议放到 config/local_settings.py 或环境变量）
     JYGS_PHONE = ""
     JYGS_PASSWORD = ""
-    # 韭研公社部分接口签名种子（建议放到 config/local_settings.py 或环境变量）
+    # 韭菜公社部分接口签名种子（建议放到 config/local_settings.py 或环境变量）
     # 用于“关注的人”等需要签名的接口；不要提交真实值到仓库。
     JYGS_TOKEN_SEED_PREFIX = ""
 
     # 飞书机器人（建议放到 config/local_settings.py）
     FEISHU_WEBHOOK = ""
     FEISHU_SECRET = ""
+    # 可选：不同用途的飞书机器人，当前代码默认仍使用 FEISHU_WEBHOOK。
+    FEISHU_STATUS_WEBHOOK = ""
+    FEISHU_STATUS_SECRET = ""
+    FEISHU_NEWS_WEBHOOK = ""
+    FEISHU_NEWS_SECRET = ""
+    FEISHU_ERROR_WEBHOOK = ""
+    FEISHU_ERROR_SECRET = ""
+
+    # 服务器部署配置（建议放到 config/local_settings.py）
+    SERVER_HOST_ALIAS = ""
+    SERVER_HOST = ""
+    SERVER_SSH_USER = "root"
+    SERVER_SSH_PORT = 22
+    SERVER_BASE_URL = ""
+    SERVER_PROJECT_DIR = "/opt/FinCrawlerAI"
+    SERVER_WEB_ROOT = "/var/www/html"
+    SERVER_STAGING_DIR = "/root/market_daily"
+    SERVER_DATA_BASE_DIR = "/root/market_daily_data"
+    SERVER_ARCHIVE_DIR = "/root/market_daily_archives"
 
     # api易（已停用，如需启用请在 config/local_settings.py 配置）
     # APIYI_BASE_URL = "https://api.apiyi.com/v1/chat/completions"

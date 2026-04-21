@@ -75,14 +75,9 @@ class DailyReportGenerator:
             (trade_date,),
         )
         if not row:
-            return {
-                "trade_date": trade_date,
-                "market_phase": "unknown",
-            }
+            return {"trade_date": trade_date}
 
-        summary = dict(row)
-        summary["market_phase"] = self._infer_market_phase(summary)
-        return summary
+        return dict(row)
 
     def _get_top_boards(self, trade_date: str, limit: int = 10) -> List[Dict[str, Any]]:
         rows = self.db.fetchall(
@@ -162,23 +157,6 @@ class DailyReportGenerator:
         )
         return [dict(row) for row in rows]
 
-    def _infer_market_phase(self, summary: Dict[str, Any]) -> str:
-        limit_up_count = summary.get("limit_up_count") or 0
-        broken_limit_count = summary.get("broken_limit_count") or 0
-        up_count = summary.get("up_count") or 0
-        down_count = summary.get("down_count") or 0
-        cyb_index_pct = summary.get("cyb_index_pct") or 0
-
-        if limit_up_count >= 50 and cyb_index_pct >= 1.5 and up_count > down_count * 1.5:
-            return "accelerate"
-        if limit_up_count >= 30 and up_count > down_count:
-            return "expand"
-        if limit_up_count >= 10:
-            return "start"
-        if broken_limit_count > limit_up_count:
-            return "fade"
-        return "mixed"
-
     def _write_json(self, report_data: Dict[str, Any], trade_date: str) -> Path:
         path = self.output_dir / f"market_daily_{trade_date.replace('-', '')}.json"
         with open(path, "w", encoding="utf-8") as f:
@@ -216,14 +194,13 @@ class DailyReportGenerator:
 
         lines.append("## 市场总览")
         lines.append("")
-        lines.append(f"- 市场阶段：{market_summary.get('market_phase', 'unknown')}")
         lines.append(f"- 上证：{market_summary.get('sh_index_pct')}")
         lines.append(f"- 深成：{market_summary.get('sz_index_pct')}")
         lines.append(f"- 创业板：{market_summary.get('cyb_index_pct')}")
+        lines.append(f"- 成交额：{market_summary.get('total_amount')}")
         lines.append(f"- 上涨家数：{market_summary.get('up_count')}")
         lines.append(f"- 下跌家数：{market_summary.get('down_count')}")
         lines.append(f"- 涨停家数：{market_summary.get('limit_up_count')}")
-        lines.append(f"- 炸板家数：{market_summary.get('broken_limit_count')}")
         lines.append(f"- 连板高度：{market_summary.get('highest_streak')}")
         lines.append("")
 
@@ -293,46 +270,31 @@ class DailyReportGenerator:
         backup_pool = report_data["backup_pool"]
         role_summary = report_data["role_summary"]
         board_distribution = report_data["board_distribution"]
-        phase_label = self._phase_label(market_summary.get("market_phase"))
-        hero_pills_html = self._build_hero_pills(
-            market_summary=market_summary,
-            top_boards=top_boards,
-            observation_pool=observation_pool,
-            backup_pool=backup_pool,
-        )
-        hero_focus_html = self._build_hero_focus(
-            market_summary=market_summary,
-            top_boards=top_boards,
-            role_summary=role_summary,
-            backup_pool=backup_pool,
-        )
-        decision_chain_html = self._build_decision_chain(
-            market_summary=market_summary,
-            top_boards=top_boards,
-            observation_pool=observation_pool,
-            role_summary=role_summary,
-            backup_pool=backup_pool,
-        )
+        index_chips_html = self._build_index_chips(market_summary)
+        hero_gauges_html = self._build_hero_gauges(market_summary)
+        hero_core_targets_html = self._build_hero_core_targets(observation_pool)
+        observation_modals_html = self._build_observation_modals(observation_pool)
 
         summary_cards = [
-            ("市场阶段", phase_label),
-            ("上证", self._fmt_number(market_summary.get("sh_index_pct"), suffix="%")),
-            ("深成", self._fmt_number(market_summary.get("sz_index_pct"), suffix="%")),
-            ("创业板", self._fmt_number(market_summary.get("cyb_index_pct"), suffix="%")),
+            ("上证指数", self._fmt_number(market_summary.get("sh_index_pct"), suffix="%"), self._pct_class(market_summary.get("sh_index_pct"))),
+            ("深证成指", self._fmt_number(market_summary.get("sz_index_pct"), suffix="%"), self._pct_class(market_summary.get("sz_index_pct"))),
+            ("创业板指", self._fmt_number(market_summary.get("cyb_index_pct"), suffix="%"), self._pct_class(market_summary.get("cyb_index_pct"))),
+            ("两市成交额", self._fmt_amount(market_summary.get("total_amount")), ""),
             ("上涨家数", self._fmt_number(market_summary.get("up_count"))),
             ("下跌家数", self._fmt_number(market_summary.get("down_count"))),
             ("涨停家数", self._fmt_number(market_summary.get("limit_up_count"))),
-            ("炸板家数", self._fmt_number(market_summary.get("broken_limit_count"))),
+            ("连板高度", self._fmt_number(market_summary.get("highest_streak")), ""),
         ]
 
         cards_html = "\n".join(
             f"""
             <article class="metric-card">
               <div class="metric-label">{label}</div>
-              <div class="metric-value">{value}</div>
+              <div class="metric-value {extra_class if len(item) > 2 else ''}">{value}</div>
             </article>
             """
-            for label, value in summary_cards
+            for item in summary_cards
+            for label, value, extra_class in [item if len(item) == 3 else (item[0], item[1], "")]
         )
 
         boards_html = "\n".join(
@@ -367,26 +329,6 @@ class DailyReportGenerator:
             </li>
             """
             for row in backup_pool
-        )
-
-        role_summary_html = "\n".join(
-            f"""
-            <li>
-              <span>{self._role_label(row['role_tag'])}</span>
-              <strong>{self._fmt_number(row['cnt'])}</strong>
-            </li>
-            """
-            for row in role_summary
-        )
-
-        board_distribution_html = "\n".join(
-            f"""
-            <li>
-              <span>{self._esc(row['board_name'])}</span>
-              <strong>{self._fmt_number(row['cnt'])}</strong>
-            </li>
-            """
-            for row in board_distribution
         )
 
         return f"""<!DOCTYPE html>
@@ -488,11 +430,12 @@ class DailyReportGenerator:
     }}
     h1 {{
       margin: 0;
-      font-size: clamp(34px, 5vw, 58px);
-      line-height: 0.96;
+      font-size: clamp(34px, 4.7vw, 56px);
+      line-height: 1;
       font-family: "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
       font-weight: 700;
-      max-width: 10ch;
+      max-width: none;
+      white-space: nowrap;
     }}
     .hero-sub {{
       margin-top: 16px;
@@ -537,37 +480,150 @@ class DailyReportGenerator:
       font-size: 12px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: rgba(255, 235, 218, 0.68);
+      color: #ffd8b4;
       margin-bottom: 14px;
+      font-weight: 700;
     }}
-    .hero-focus-list {{
-      list-style: none;
-      margin: 0;
-      padding: 0;
+    .hero-rail-subtitle {{
+      margin-top: 18px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #ffd8b4;
+      font-weight: 700;
+    }}
+    .hero-gauge-grid {{
       display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
     }}
-    .hero-focus-item {{
-      padding: 12px 14px;
+    .hero-gauge-card {{
+      display: grid;
+      gap: 8px;
+      justify-items: center;
+      padding: 10px 8px 4px;
       border-radius: 18px;
       background: rgba(255, 250, 244, 0.08);
       border: 1px solid rgba(255, 238, 218, 0.1);
     }}
-    .hero-focus-kicker {{
-      color: rgba(255, 232, 210, 0.68);
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      margin-bottom: 6px;
+    .gauge-dial {{
+      position: relative;
+      width: 126px;
+      height: 74px;
+      border-radius: 126px 126px 0 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04));
+      overflow: hidden;
+      border: 1px solid rgba(255, 238, 218, 0.12);
     }}
-    .hero-focus-main {{
+    .gauge-dial::before {{
+      content: "";
+      position: absolute;
+      inset: 10px 10px 0;
+      border-radius: 120px 120px 0 0;
+      background:
+        linear-gradient(90deg, rgba(31,143,85,0.95) 0 32%, rgba(240,181,59,0.9) 32% 68%, rgba(186,58,48,0.95) 68% 100%);
+      opacity: 0.92;
+    }}
+    .gauge-dial::after {{
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: 88px;
+      height: 44px;
+      transform: translateX(-50%);
+      background: #3b2419;
+      border-radius: 88px 88px 0 0;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }}
+    .gauge-needle {{
+      position: absolute;
+      left: 50%;
+      bottom: 2px;
+      width: 4px;
+      height: 52px;
+      background: #fff4e8;
+      border-radius: 999px;
+      transform-origin: bottom center;
+      transform: translateX(-50%) rotate(calc(-90deg + (var(--gauge) * 1.8deg)));
+      box-shadow: 0 0 0 1px rgba(89, 44, 17, 0.2);
+      z-index: 2;
+    }}
+    .gauge-needle::after {{
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -4px;
+      width: 14px;
+      height: 14px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: #fff4e8;
+    }}
+    .gauge-core {{
+      display: grid;
+      gap: 4px;
+      justify-items: center;
+      margin-top: 6px;
+    }}
+    .gauge-core strong {{
+      display: block;
       color: #fffaf5;
-      font-size: 16px;
+      font-size: 20px;
+      line-height: 1;
+    }}
+    .gauge-core span {{
+      color: rgba(255, 235, 218, 0.72);
+      font-size: 11px;
+    }}
+    .gauge-meta {{
+      color: rgba(255, 241, 229, 0.78);
+      font-size: 12px;
+      text-align: center;
       line-height: 1.45;
     }}
-    .hero-focus-main strong {{
-      color: #ffd9bc;
+    .hero-core-list {{
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
     }}
+    .hero-core-item button {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      cursor: pointer;
+      text-align: left;
+      font: inherit;
+      text-decoration: none;
+      color: #fffaf5;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255, 250, 244, 0.08);
+      border: 1px solid rgba(255, 238, 218, 0.1);
+      font-size: 14px;
+    }}
+    .hero-core-item strong {{
+      color: #ffe2c8;
+    }}
+    .hero-core-item:nth-child(1) button {{
+      background: linear-gradient(90deg, rgba(201,104,34,0.22), rgba(255,250,244,0.08));
+      border-color: rgba(255, 208, 170, 0.18);
+    }}
+    .hero-core-item:nth-child(2) button {{
+      background: linear-gradient(90deg, rgba(185,74,50,0.18), rgba(255,250,244,0.08));
+      border-color: rgba(255, 190, 168, 0.16);
+    }}
+    .hero-core-item:nth-child(3) button {{
+      background: linear-gradient(90deg, rgba(32,122,104,0.18), rgba(255,250,244,0.08));
+      border-color: rgba(169, 225, 214, 0.14);
+    }}
+    .hero-core-item:nth-child(1) strong {{ color: #ffd58f; }}
+    .hero-core-item:nth-child(2) strong {{ color: #ffc0ad; }}
+    .hero-core-item:nth-child(3) strong {{ color: #b9f1e1; }}
     .section {{
       margin-top: 22px;
       background: var(--panel);
@@ -588,6 +644,7 @@ class DailyReportGenerator:
       margin: 0;
       font-size: 24px;
       font-family: "Iowan Old Style", "Palatino Linotype", serif;
+      color: var(--accent-deep);
     }}
     .section-title span {{
       color: var(--muted);
@@ -730,17 +787,17 @@ class DailyReportGenerator:
     .chip-watchlist {{ background: rgba(88, 81, 74, 0.12); color: #5d5750; }}
     .pool-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+      gap: 12px;
     }}
     .pool-card {{
       position: relative;
       overflow: hidden;
-      background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(255,249,241,0.9));
+      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,249,241,0.92));
       border: 1px solid var(--line);
-      border-radius: 22px;
-      padding: 18px;
-      box-shadow: 0 10px 28px rgba(73, 54, 35, 0.08);
+      border-radius: 18px;
+      box-shadow: 0 10px 26px rgba(73, 54, 35, 0.08);
+      padding: 0;
     }}
     .pool-card::before {{
       content: "";
@@ -749,81 +806,58 @@ class DailyReportGenerator:
       width: 4px;
       background: linear-gradient(180deg, var(--accent), rgba(199, 104, 25, 0.18));
     }}
-    .pool-card-top {{
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
+    .pool-summary {{
+      width: 100%;
+      cursor: pointer;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      font: inherit;
+      padding: 14px 16px 12px 18px;
+      display: grid;
       gap: 10px;
     }}
+    .pool-summary-top {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }}
     .pool-index {{
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted);
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }}
     .pool-name {{
       margin: 0;
-      font-size: 24px;
-      line-height: 1.05;
+      font-size: 20px;
+      line-height: 1.08;
     }}
     .pool-symbol {{
       color: var(--muted);
-      font-size: 13px;
-      margin-top: 4px;
+      font-size: 12px;
+      margin-top: 2px;
     }}
     .score-badge {{
-      min-width: 72px;
+      min-width: 64px;
       text-align: center;
       background: linear-gradient(180deg, rgba(199, 104, 25, 0.16), rgba(199, 104, 25, 0.08));
       color: var(--accent);
-      border-radius: 18px;
-      padding: 10px 12px;
+      border-radius: 16px;
+      padding: 8px 10px;
       border: 1px solid rgba(199, 104, 25, 0.12);
     }}
     .score-badge strong {{
       display: block;
-      font-size: 22px;
+      font-size: 20px;
       line-height: 1;
     }}
     .pool-meta {{
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 14px;
-    }}
-    .pool-detail {{
-      margin-top: 16px;
-      display: grid;
-      gap: 10px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.6;
-    }}
-    .pool-detail strong {{
-      color: var(--ink);
-    }}
-    .side-grid {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }}
-    .side-list {{
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: 10px;
-    }}
-    .side-list li {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.55);
-      font-size: 14px;
+      gap: 6px;
     }}
     .backup-list {{
       margin: 0;
@@ -853,12 +887,98 @@ class DailyReportGenerator:
       text-overflow: ellipsis;
       white-space: nowrap;
     }}
+    .modal-overlay {{
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 13, 10, 0.56);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      z-index: 50;
+    }}
+    .modal-overlay.is-open {{
+      display: flex;
+    }}
+    .modal-card {{
+      width: min(760px, calc(100vw - 28px));
+      max-height: min(86vh, 900px);
+      overflow: auto;
+      background: linear-gradient(180deg, rgba(255,253,249,0.98), rgba(252,244,232,0.96));
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 30px 80px rgba(45, 28, 16, 0.28);
+      padding: 22px;
+    }}
+    .modal-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }}
+    .modal-head h3 {{
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.05;
+    }}
+    .modal-close {{
+      border: 0;
+      border-radius: 999px;
+      background: rgba(80, 58, 44, 0.08);
+      color: var(--ink);
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      font-size: 18px;
+    }}
+    .modal-meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }}
+    .modal-body {{
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+    }}
+    .modal-body strong {{
+      color: var(--ink);
+    }}
+    .modal-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .modal-metric {{
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.64);
+      border: 1px solid var(--line);
+    }}
+    .modal-metric span {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .modal-metric strong {{
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+      line-height: 1.3;
+    }}
     @media (max-width: 900px) {{
       .wrap {{ width: min(100vw - 18px, 1380px); padding-top: 18px; }}
       .hero, .section {{ padding: 18px; border-radius: 22px; }}
       .hero-grid {{ grid-template-columns: 1fr; }}
-      .side-grid {{ grid-template-columns: 1fr; }}
       .backup-list li {{ grid-template-columns: 1fr; }}
+      .modal-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -870,21 +990,20 @@ class DailyReportGenerator:
           <div class="eyebrow">Strategic Market Dashboard</div>
           <h1>市场观察日报</h1>
           <div class="hero-sub">
-            <strong>{self._esc(metadata['trade_date'])}</strong> 的策略总览页。
-            本页不堆砌过程噪音，只保留可执行结论，围绕 <strong>市场温度</strong>、
-            <strong>主线强度</strong>、<strong>核心角色</strong> 与 <strong>节奏闸口</strong>
-            四层框架完成收敛，形成一张可用于盘前定框架、盘中跟强度、盘后校验结构的高密度观察面板。
+            <strong>{self._esc(metadata['trade_date'])}</strong> 聚焦当天最值得先看懂的盘面结构：指数温度、情绪强弱、主线板块与核心标的，把分散信息压缩成一张可以直接用于复盘和次日盯盘的决策面板。
           </div>
-          <div class="hero-pill-row">{hero_pills_html}</div>
+          <div class="hero-pill-row">{index_chips_html}</div>
         </div>
         <aside class="hero-rail">
           <div class="hero-rail-title">本页聚焦</div>
-          <ul class="hero-focus-list">{hero_focus_html}</ul>
+          <div class="hero-gauge-grid">{hero_gauges_html}</div>
+          <div class="hero-rail-subtitle">核心标的 3 只</div>
+          <ul class="hero-core-list">{hero_core_targets_html}</ul>
         </aside>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="market-overview">
       <div class="section-title">
         <h2>市场总览</h2>
         <span>生成时间 {self._esc(metadata['generated_at'])}</span>
@@ -894,17 +1013,17 @@ class DailyReportGenerator:
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="observation-pool">
       <div class="section-title">
-        <h2>策略决策链路</h2>
-        <span>从温度识别到执行分层</span>
+        <h2>核心标的矩阵</h2>
+        <span></span>
       </div>
-      <div class="logic-grid">
-        {decision_chain_html}
+      <div class="pool-grid">
+        {observation_cards_html}
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="top-boards">
       <div class="section-title">
         <h2>主线板块</h2>
         <span>强度排序与阶段定位</span>
@@ -930,34 +1049,7 @@ class DailyReportGenerator:
       </div>
     </section>
 
-    <section class="section">
-      <div class="section-title">
-        <h2>重点观察 20 只</h2>
-        <span>按龙头 / 中军 / 扩散 / 观察补位分层编组</span>
-      </div>
-      <div class="pool-grid">
-        {observation_cards_html}
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-title">
-        <h2>结构分布</h2>
-        <span>角色密度与板块聚焦</span>
-      </div>
-      <div class="side-grid">
-        <div>
-          <h3>角色分布</h3>
-          <ul class="side-list">{role_summary_html}</ul>
-        </div>
-        <div>
-          <h3>板块分布</h3>
-          <ul class="side-list">{board_distribution_html}</ul>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
+    <section class="section" id="backup-pool">
       <div class="section-title">
         <h2>备选池</h2>
         <span>二级预案与轮动补位</span>
@@ -967,19 +1059,45 @@ class DailyReportGenerator:
       </ul>
     </section>
   </main>
+  {observation_modals_html}
+  <script>
+    (() => {{
+      const openButtons = document.querySelectorAll('[data-modal-open]');
+      const closeButtons = document.querySelectorAll('[data-modal-close]');
+      const closeModal = (modal) => {{
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        document.body.style.overflow = '';
+      }};
+      const openModal = (modalId) => {{
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+        modal.classList.add('is-open');
+        document.body.style.overflow = 'hidden';
+      }};
+      openButtons.forEach((button) => {{
+        button.addEventListener('click', (event) => {{
+          event.preventDefault();
+          openModal(button.dataset.modalOpen);
+        }});
+      }});
+      closeButtons.forEach((button) => {{
+        button.addEventListener('click', () => closeModal(button.closest('.modal-overlay')));
+      }});
+      document.querySelectorAll('.modal-overlay').forEach((modal) => {{
+        modal.addEventListener('click', (event) => {{
+          if (event.target === modal) closeModal(modal);
+        }});
+      }});
+      document.addEventListener('keydown', (event) => {{
+        if (event.key === 'Escape') {{
+          document.querySelectorAll('.modal-overlay.is-open').forEach(closeModal);
+        }}
+      }});
+    }})();
+  </script>
 </body>
 </html>"""
-
-    def _phase_label(self, phase: Any) -> str:
-        mapping = {
-            "accelerate": "主升加速",
-            "expand": "扩散强化",
-            "start": "启动试错",
-            "fade": "高位分歧",
-            "mixed": "震荡博弈",
-            "unknown": "待确认",
-        }
-        return mapping.get(str(phase or "").strip(), self._esc(phase) if phase else "待确认")
 
     def _role_label(self, role_tag: Any) -> str:
         mapping = {
@@ -991,151 +1109,120 @@ class DailyReportGenerator:
         value = str(role_tag or "").strip()
         return mapping.get(value, value or "-")
 
-    def _build_hero_pills(
-        self,
-        market_summary: Dict[str, Any],
-        top_boards: List[Dict[str, Any]],
-        observation_pool: List[Dict[str, Any]],
-        backup_pool: List[Dict[str, Any]],
-    ) -> str:
-        lead_names = " / ".join(self._esc(board.get("board_name")) for board in top_boards[:3]) or "待识别"
-        pills = [
-            ("市场阶段", self._phase_label(market_summary.get("market_phase"))),
-            ("主线簇", lead_names),
-            ("重点观察", f"{len(observation_pool)} 只"),
-            ("备选预案", f"{len(backup_pool)} 只"),
+    def _build_index_chips(self, market_summary: Dict[str, Any]) -> str:
+        items = [
+            ("上证", market_summary.get("sh_index_pct")),
+            ("深成", market_summary.get("sz_index_pct")),
+            ("创业板", market_summary.get("cyb_index_pct")),
         ]
         return "\n".join(
-            f'<span class="hero-pill"><strong>{label}</strong>{value}</span>' for label, value in pills
+            f'<span class="hero-pill"><strong>{label}</strong><span class="{self._pct_class(value)}">{self._fmt_number(value, suffix="%")}</span></span>'
+            for label, value in items
         )
 
-    def _build_hero_focus(
-        self,
-        market_summary: Dict[str, Any],
-        top_boards: List[Dict[str, Any]],
-        role_summary: List[Dict[str, Any]],
-        backup_pool: List[Dict[str, Any]],
-    ) -> str:
-        lead_board = top_boards[0] if top_boards else {}
-        strongest_role = role_summary[0] if role_summary else {}
-        up_count = market_summary.get("up_count")
-        down_count = market_summary.get("down_count")
-        breadth_text = f"{self._fmt_number(up_count)} / {self._fmt_number(down_count)}"
-        items = [
-            (
-                "主攻方向",
-                f"<strong>{self._esc(lead_board.get('board_name') or '待识别')}</strong> 处于当前强度队列前沿，"
-                f"板块分 {self._fmt_number(lead_board.get('board_score'))}。"
-            ),
-            (
-                "情绪对照",
-                f"上涨/下跌家数为 <strong>{breadth_text}</strong>，连板高度 "
-                f"<strong>{self._fmt_number(market_summary.get('highest_streak'))}</strong>。"
-            ),
-            (
-                "结构占优",
-                f"{self._role_label(strongest_role.get('role_tag'))} 当前占比最高，样本数 "
-                f"<strong>{self._fmt_number(strongest_role.get('cnt'))}</strong>。"
-            ),
-            (
-                "节奏预案",
-                f"备选池保留 <strong>{len(backup_pool)}</strong> 个切换位，用于轮动承接与风险回撤时的层级过渡。"
-            ),
+    def _build_hero_gauges(self, market_summary: Dict[str, Any]) -> str:
+        breadth_ratio = self._compute_breadth_ratio(market_summary)
+        emotion_score = self._compute_emotion_score(market_summary)
+        gauges = [
+            ("大盘", breadth_ratio, f"{self._fmt_number(market_summary.get('up_count'))} / {self._fmt_number(market_summary.get('down_count'))}"),
+            ("情绪", emotion_score, f"涨停 {self._fmt_number(market_summary.get('limit_up_count'))} · 连板 {self._fmt_number(market_summary.get('highest_streak'))}"),
         ]
         return "\n".join(
             f"""
-            <li class="hero-focus-item">
-              <div class="hero-focus-kicker">{title}</div>
-              <div class="hero-focus-main">{body}</div>
+            <div class="hero-gauge-card">
+              <div class="gauge-dial" style="--gauge:{max(min(value, 100), 0)}">
+                <div class="gauge-needle"></div>
+              </div>
+              <div class="gauge-core">
+                <strong>{self._fmt_number(value)}</strong>
+                <span>{self._esc(title)}</span>
+              </div>
+              <div class="gauge-meta">{self._esc(meta)}</div>
+            </div>
+            """
+            for title, value, meta in gauges
+        )
+
+    def _build_hero_core_targets(self, observation_pool: List[Dict[str, Any]]) -> str:
+        candidates = observation_pool[:3]
+        if not candidates:
+            return "<li class=\"hero-core-item\">暂无核心标的</li>"
+        return "\n".join(
+            f"""
+            <li class="hero-core-item">
+              <button type="button" data-modal-open="modal-{self._esc(row['symbol'])}">
+                <span>{index}. {self._esc(row['name'])}</span>
+                <strong>{self._role_label(row.get('role_tag'))}</strong>
+              </button>
             </li>
             """
-            for title, body in items
-        )
-
-    def _build_decision_chain(
-        self,
-        market_summary: Dict[str, Any],
-        top_boards: List[Dict[str, Any]],
-        observation_pool: List[Dict[str, Any]],
-        role_summary: List[Dict[str, Any]],
-        backup_pool: List[Dict[str, Any]],
-    ) -> str:
-        lead_names = " / ".join(self._esc(board.get("board_name")) for board in top_boards[:3]) or "待识别"
-        role_text = " / ".join(
-            f"{self._role_label(row.get('role_tag'))} {self._fmt_number(row.get('cnt'))}" for row in role_summary
-        ) or "结构待识别"
-        cards = [
-            (
-                "Step 01",
-                "先定市场温度",
-                f"优先识别环境是否支持放大仓位。当前市场阶段为 {self._phase_label(market_summary.get('market_phase'))}，"
-                f"上涨家数 {self._fmt_number(market_summary.get('up_count'))}、下跌家数 {self._fmt_number(market_summary.get('down_count'))}，"
-                f"连板高度 {self._fmt_number(market_summary.get('highest_streak'))} 板。",
-                "这一层决定交易是否以进攻为主，还是以试错和控制回撤为先。",
-            ),
-            (
-                "Step 02",
-                "再做主线收敛",
-                f"从板块强度里抽取资金最集中的方向，当前强势簇主要集中在 {lead_names}。"
-                f"首位方向的板块分为 {self._fmt_number(top_boards[0].get('board_score')) if top_boards else '-'}，"
-                f"用于界定今日的核心战场。",
-                "这一层解决的是资金到底围绕哪条主线完成定价和扩散。",
-            ),
-            (
-                "Step 03",
-                "然后筛核心角色",
-                f"在主线内部继续区分带动情绪的龙头、承接容量的中军以及负责扩散的补涨层。"
-                f"当前观察池共 {len(observation_pool)} 只，角色结构为 {role_text}。",
-                "这一层决定观察顺序、仓位层级和盘中跟踪优先级。",
-            ),
-            (
-                "Step 04",
-                "最后管执行节奏",
-                f"把高弹性机会和回撤控制放进同一套闸门里。当前炸板家数为 "
-                f"{self._fmt_number(market_summary.get('broken_limit_count'))}，并保留 {len(backup_pool)} 只备选标的作为轮动预案。",
-                "这一层用于处理追强、分歧承接和失效切换，避免只看方向不看节奏。",
-            ),
-        ]
-        return "\n".join(
-            f"""
-            <article class="logic-card">
-              <div class="logic-step">{step}</div>
-              <h3 class="logic-title">{title}</h3>
-              <div class="logic-desc">{desc}</div>
-              <div class="logic-foot">{foot}</div>
-            </article>
-            """
-            for step, title, desc, foot in cards
+            for index, row in enumerate(candidates, start=1)
         )
 
     def _render_observation_card(self, index: int, row: Dict[str, Any]) -> str:
         role_tag = row.get("role_tag") or "watchlist"
         return f"""
-        <article class="pool-card">
-          <div class="pool-card-top">
-            <div>
-              <div class="pool-index">#{index:02d}</div>
-              <h3 class="pool-name">{self._esc(row['name'])}</h3>
-              <div class="pool-symbol">{self._esc(row['symbol'])}</div>
+        <article class="pool-card" id="stock-{self._esc(row['symbol'])}">
+          <button type="button" class="pool-summary" data-modal-open="modal-{self._esc(row['symbol'])}">
+            <div class="pool-summary-top">
+              <div>
+                <div class="pool-index">#{index:02d}</div>
+                <h3 class="pool-name">{self._esc(row['name'])}</h3>
+                <div class="pool-symbol">{self._esc(row['symbol'])}</div>
+              </div>
+              <div class="score-badge">
+                <span>总分</span>
+                <strong>{self._fmt_number(row.get('final_score'))}</strong>
+              </div>
             </div>
-            <div class="score-badge">
-              <span>总分</span>
-              <strong>{self._fmt_number(row.get('final_score'))}</strong>
+            <div class="pool-meta">
+              <span class="chip chip-role chip-{self._esc(role_tag)}">{self._role_label(role_tag)}</span>
+              <span class="chip chip-board">{self._esc(row.get('board_name'))}</span>
+              <span class="chip">板块排 {self._fmt_number(row.get('board_rank'))}</span>
+              <span class="chip">股票排 {self._fmt_number(row.get('stock_rank'))}</span>
             </div>
-          </div>
-          <div class="pool-meta">
-            <span class="chip chip-role chip-{self._esc(role_tag)}">{self._role_label(role_tag)}</span>
-            <span class="chip chip-board">{self._esc(row.get('board_name'))}</span>
-            <span class="chip">板块排 {self._fmt_number(row.get('board_rank'))}</span>
-            <span class="chip">股票排 {self._fmt_number(row.get('stock_rank'))}</span>
-          </div>
-          <div class="pool-detail">
-            <div><strong>核心叙事：</strong>{self._esc(row.get('selected_reason'))}</div>
-            <div><strong>验证路径：</strong>{self._esc(row.get('watch_points'))}</div>
-            <div><strong>风险闸口：</strong>{self._esc(row.get('risk_flags'))}</div>
-          </div>
+          </button>
         </article>
         """
+
+    def _build_observation_modals(self, observation_pool: List[Dict[str, Any]]) -> str:
+        if not observation_pool:
+            return ""
+        return "\n".join(
+            f"""
+            <div class="modal-overlay" id="modal-{self._esc(row['symbol'])}">
+              <div class="modal-card">
+                <div class="modal-head">
+                  <div>
+                    <h3>{self._esc(row['name'])}</h3>
+                    <div class="pool-symbol">{self._esc(row['symbol'])}</div>
+                    <div class="modal-meta">
+                      <span class="chip chip-role chip-{self._esc(row.get('role_tag') or 'watchlist')}">{self._role_label(row.get('role_tag'))}</span>
+                      <span class="chip chip-board">{self._esc(row.get('board_name'))}</span>
+                    </div>
+                  </div>
+                  <button type="button" class="modal-close" data-modal-close>×</button>
+                </div>
+                <div class="modal-body">
+                  <div class="modal-grid">
+                    <div class="modal-metric">
+                      <span>综合评分</span>
+                      <strong>{self._fmt_number(row.get('final_score'))}</strong>
+                    </div>
+                    <div class="modal-metric">
+                      <span>板块 / 股票排序</span>
+                      <strong>板块排 {self._fmt_number(row.get('board_rank'))} · 股票排 {self._fmt_number(row.get('stock_rank'))}</strong>
+                    </div>
+                  </div>
+                  <div><strong>入选逻辑</strong><br>{self._esc(row.get('selected_reason'))}</div>
+                  <div><strong>重点盯盘</strong><br>{self._esc(row.get('watch_points'))}</div>
+                  <div><strong>风险提示</strong><br>{self._esc(row.get('risk_flags'))}</div>
+                </div>
+              </div>
+            </div>
+            """
+            for row in observation_pool
+        )
 
     def _fmt_number(self, value: Any, suffix: str = "") -> str:
         if value is None or value == "":
@@ -1145,6 +1232,31 @@ class DailyReportGenerator:
         else:
             text = str(value)
         return f"{text}{suffix}"
+
+    def _fmt_amount(self, value: Any) -> str:
+        try:
+            numeric = float(value)
+        except Exception:
+            return "-"
+        if numeric >= 1_0000_0000_0000:
+            return f"{numeric / 1_0000_0000_0000:.2f}万亿"
+        if numeric >= 1_0000_0000:
+            return f"{numeric / 1_0000_0000:.0f}亿"
+        return self._fmt_number(numeric)
+
+    def _compute_breadth_ratio(self, market_summary: Dict[str, Any]) -> float:
+        up_count = float(market_summary.get("up_count") or 0)
+        down_count = float(market_summary.get("down_count") or 0)
+        total = up_count + down_count
+        if total <= 0:
+            return 0.0
+        return round(up_count / total * 100, 1)
+
+    def _compute_emotion_score(self, market_summary: Dict[str, Any]) -> float:
+        limit_up = float(market_summary.get("limit_up_count") or 0)
+        highest_streak = float(market_summary.get("highest_streak") or 0)
+        score = min(limit_up * 1.2 + highest_streak * 8, 100.0)
+        return round(score, 1)
 
     def _pct_class(self, value: Any) -> str:
         try:
