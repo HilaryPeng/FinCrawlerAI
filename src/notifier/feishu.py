@@ -22,12 +22,12 @@ class FeishuCardSection:
 class FeishuNotifier:
     def __init__(self, config):
         self.config = config
-        self.webhook = (getattr(config, "FEISHU_WEBHOOK", "") or "").strip()
-        self.secret = (getattr(config, "FEISHU_SECRET", "") or "").strip()
+        self.webhook = (getattr(config, "FEISHU_NEWS_WEBHOOK", "") or "").strip()
+        self.secret = (getattr(config, "FEISHU_NEWS_SECRET", "") or "").strip()
 
     def send_sections(self, title: str, sections: List[FeishuCardSection]) -> None:
         if not self.webhook:
-            raise RuntimeError("Missing FEISHU_WEBHOOK in config/local_settings.py")
+            raise RuntimeError("Missing FEISHU_NEWS_WEBHOOK in config/local_settings.py")
 
         cards = self._build_cards(title=title, sections=sections)
         for index, card in enumerate(cards, start=1):
@@ -38,7 +38,7 @@ class FeishuNotifier:
 
     def send_markdown(self, title: str, markdown: str) -> None:
         if not self.webhook:
-            raise RuntimeError("Missing FEISHU_WEBHOOK in config/local_settings.py")
+            raise RuntimeError("Missing FEISHU_NEWS_WEBHOOK in config/local_settings.py")
 
         cards = self._build_markdown_cards(title=title, markdown=markdown)
         for index, card in enumerate(cards, start=1):
