@@ -25,7 +25,7 @@
 
 ```bash
 cd /opt
-git clone <YOUR_REPO_URL> FinCrawlerAI
+git clone https://github.com/HilaryPeng/FinCrawlerAI.git FinCrawlerAI
 cd /opt/FinCrawlerAI
 
 python3 -m venv .venv
@@ -45,8 +45,8 @@ config/local_settings.py
 最少配置：
 
 ```python
-FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
-FEISHU_SECRET = ""
+FEISHU_NEWS_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+FEISHU_NEWS_SECRET = ""
 
 JYGS_PHONE = "你的韭菜公社手机号"
 JYGS_PASSWORD = "你的韭菜公社密码"
@@ -125,6 +125,13 @@ python scripts/run_market_daily_job.py \
 后面稳定后再考虑把 `cailian` 一起并进去。
 
 ## 8. 常用命令
+
+更新服务器代码并校验：
+
+```bash
+cd /opt/FinCrawlerAI
+bash scripts/deploy_server.sh
+```
 
 手动重跑某一天：
 

@@ -5,6 +5,7 @@ config/local_settings.py
 # Data and logs
 data/
 logs/
+.venv/
 
 # Python
 __pycache__/
@@ -12,5 +13,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+._*
 
 node_modules
