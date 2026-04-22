@@ -24,6 +24,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+MIN_QUOTES_FOR_RETRY = 4500
+MAX_COLLECT_RETRIES = 1
+
 
 def clear_proxy_env() -> None:
     for key in [
@@ -103,6 +106,47 @@ def build_notification_markdown(report_json_path: Path, report_url: str, quality
     return "\n".join(parts)
 
 
+def run_collection_with_retry(
+    *,
+    collect_market_data_fn,
+    trade_date: str,
+    db_path,
+    with_news: bool,
+    news_sources: set[str],
+    with_attention: bool,
+    min_quote_count: int,
+    max_collect_retries: int,
+) -> tuple[dict, int]:
+    retry_count = 0
+    collect_result = collect_market_data_fn(
+        trade_date=trade_date,
+        db_path=db_path,
+        with_news=with_news,
+        news_sources=news_sources,
+        with_attention=with_attention,
+    )
+
+    while (
+        int(collect_result.get("quotes", 0) or 0) < min_quote_count
+        and retry_count < max_collect_retries
+    ):
+        retry_count += 1
+        print(
+            f"quote_count_below_retry_threshold={collect_result.get('quotes', 0)}<{min_quote_count}; "
+            f"retry_collect_attempt={retry_count}/{max_collect_retries}",
+            flush=True,
+        )
+        collect_result = collect_market_data_fn(
+            trade_date=trade_date,
+            db_path=db_path,
+            with_news=with_news,
+            news_sources=news_sources,
+            with_attention=with_attention,
+        )
+
+    return collect_result, retry_count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily market pipeline on the server")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Trade date in YYYY-MM-DD format")
@@ -150,14 +194,18 @@ def main() -> int:
     news_sources = {item.strip() for item in args.news_sources.split(",") if item.strip()}
 
     print(f"=== Daily job start: {trade_date} ===", flush=True)
-    collect_result = collect_market_data(
+    collect_result, collect_retry_count = run_collection_with_retry(
+        collect_market_data_fn=collect_market_data,
         trade_date=trade_date,
         db_path=config.MARKET_DAILY_DB,
         with_news=args.with_news,
         news_sources=news_sources,
         with_attention=args.with_attention,
+        min_quote_count=MIN_QUOTES_FOR_RETRY,
+        max_collect_retries=MAX_COLLECT_RETRIES,
     )
     print(f"collect_result={collect_result}", flush=True)
+    print(f"collect_retry_count={collect_retry_count}", flush=True)
 
     db = DatabaseConnection(config.MARKET_DAILY_DB)
     create_all_tables(db)
