@@ -44,6 +44,7 @@ class DailyReportGenerator:
         backup_pool = self._get_observation_pool(trade_date, pool_group="backup")
         role_summary = self._get_pool_role_summary(trade_date)
         board_distribution = self._get_pool_board_distribution(trade_date)
+        strong_board_summary = self._get_strong_board_summary(trade_date)
 
         return {
             "metadata": {
@@ -57,6 +58,7 @@ class DailyReportGenerator:
             "backup_pool": backup_pool,
             "role_summary": role_summary,
             "board_distribution": board_distribution,
+            "strong_board_summary": strong_board_summary,
         }
 
     def _get_market_summary(self, trade_date: str) -> Dict[str, Any]:
@@ -162,6 +164,66 @@ class DailyReportGenerator:
         )
         return [dict(row) for row in rows]
 
+    def _get_strong_board_summary(self, trade_date: str) -> List[Dict[str, Any]]:
+        rows = self.db.fetchall(
+            """
+            SELECT
+                p.board_name,
+                p.symbol,
+                p.name,
+                p.final_score,
+                f.amount
+            FROM daily_observation_pool p
+            LEFT JOIN daily_stock_features f
+              ON p.trade_date = f.trade_date
+             AND p.symbol = f.symbol
+            WHERE p.trade_date = ?
+              AND p.pool_group = 'top20'
+              AND p.board_name IS NOT NULL
+            ORDER BY p.board_name ASC, p.final_score DESC, f.amount DESC
+            """,
+            (trade_date,),
+        )
+        grouped: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            board_name = row["board_name"]
+            if board_name not in grouped:
+                grouped[board_name] = {
+                    "board_name": board_name,
+                    "strong_count": 0,
+                    "strong_amount": 0.0,
+                    "score_sum": 0.0,
+                    "top_stock_symbol": row["symbol"],
+                    "top_stock_name": row["name"],
+                    "top_stock_score": row["final_score"],
+                }
+            item = grouped[board_name]
+            item["strong_count"] += 1
+            item["strong_amount"] += float(row["amount"] or 0.0)
+            item["score_sum"] += float(row["final_score"] or 0.0)
+        result = []
+        for item in grouped.values():
+            count = int(item["strong_count"])
+            result.append(
+                {
+                    "board_name": item["board_name"],
+                    "strong_count": count,
+                    "strong_amount": round(float(item["strong_amount"]), 2),
+                    "avg_strong_score": round(float(item["score_sum"]) / count, 2) if count else 0.0,
+                    "top_stock_symbol": item["top_stock_symbol"],
+                    "top_stock_name": item["top_stock_name"],
+                    "top_stock_score": item["top_stock_score"],
+                }
+            )
+        return sorted(
+            result,
+            key=lambda item: (
+                -int(item["strong_count"]),
+                -float(item["strong_amount"]),
+                str(item["board_name"]),
+            ),
+        )
+
     def _write_json(self, report_data: Dict[str, Any], trade_date: str) -> Path:
         path = self.output_dir / f"market_daily_{trade_date.replace('-', '')}.json"
         with open(path, "w", encoding="utf-8") as f:
@@ -190,6 +252,7 @@ class DailyReportGenerator:
         backup_pool = report_data["backup_pool"]
         role_summary = report_data["role_summary"]
         board_distribution = report_data["board_distribution"]
+        strong_board_summary = report_data["strong_board_summary"]
         markdown = self.presentation["markdown"]
 
         lines: List[str] = []
@@ -256,6 +319,17 @@ class DailyReportGenerator:
             lines.append(f"- {row['board_name']}: {row['cnt']}")
         lines.append("")
 
+        lines.append(f"## {markdown['strong_board_summary']}")
+        lines.append("")
+        for row in strong_board_summary:
+            lines.append(
+                f"- {row['board_name']}: 强势股 {row['strong_count']} 只，"
+                f"合计成交 {self._fmt_amount(row['strong_amount'])}，"
+                f"均分 {self._fmt_number(row['avg_strong_score'])}，"
+                f"最强 {row['top_stock_name']}({row['top_stock_symbol']})"
+            )
+        lines.append("")
+
         if backup_pool:
             lines.append(f"## {markdown['backup_pool']}")
             lines.append("")
@@ -276,6 +350,7 @@ class DailyReportGenerator:
         backup_pool = report_data["backup_pool"]
         role_summary = report_data["role_summary"]
         board_distribution = report_data["board_distribution"]
+        strong_board_summary = report_data["strong_board_summary"]
         index_chips_html = self._build_index_chips(market_summary)
         hero_gauges_html = self._build_hero_gauges(market_summary)
         hero_core_targets_html = self._build_hero_core_targets(observation_pool)
@@ -335,6 +410,19 @@ class DailyReportGenerator:
             </li>
             """
             for row in backup_pool
+        )
+        strong_board_html = "\n".join(
+            f"""
+            <tr>
+              <td>{index}</td>
+              <td>{self._esc(row['board_name'])}</td>
+              <td>{self._fmt_number(row.get('strong_count'))}</td>
+              <td>{self._fmt_amount(row.get('strong_amount'))}</td>
+              <td>{self._fmt_number(row.get('avg_strong_score'))}</td>
+              <td>{self._esc(row.get('top_stock_name'))} {self._esc(row.get('top_stock_symbol'))}</td>
+            </tr>
+            """
+            for index, row in enumerate(strong_board_summary, start=1)
         )
 
         return f"""<!DOCTYPE html>
@@ -790,6 +878,9 @@ class DailyReportGenerator:
     .chip-dragon {{ background: rgba(179, 54, 45, 0.12); color: #9c2119; }}
     .chip-center {{ background: rgba(17, 94, 89, 0.12); color: #0e5e59; }}
     .chip-follow {{ background: rgba(160, 115, 31, 0.14); color: #8a5e12; }}
+    .chip-trend_strong {{ background: rgba(179, 54, 45, 0.12); color: #9c2119; }}
+    .chip-emotion_strong {{ background: rgba(160, 83, 31, 0.14); color: #8a3f12; }}
+    .chip-capacity_strong {{ background: rgba(17, 94, 89, 0.12); color: #0e5e59; }}
     .chip-watchlist {{ background: rgba(88, 81, 74, 0.12); color: #5d5750; }}
     .pool-grid {{
       display: grid;
@@ -1026,6 +1117,30 @@ class DailyReportGenerator:
       </div>
       <div class="pool-grid">
         {observation_cards_html}
+      </div>
+    </section>
+
+    <section class="section" id="strong-board-summary">
+      <div class="section-title">
+        <h2>{self._esc(self.presentation['html']['sections']['strong_board_summary'])}</h2>
+        <span>强势股聚集度</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>板块</th>
+              <th>强势股</th>
+              <th>合计成交</th>
+              <th>均分</th>
+              <th>最强股</th>
+            </tr>
+          </thead>
+          <tbody>
+            {strong_board_html}
+          </tbody>
+        </table>
       </div>
     </section>
 

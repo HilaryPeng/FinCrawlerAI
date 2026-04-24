@@ -8,6 +8,7 @@ from src.db.connection import DatabaseConnection
 from src.db.schema import TABLE_SCHEMAS
 from src.market.ranker.selector import ObservationPoolSelector
 from src.market.features.stock_feature_builder import StockFeatureBuilder
+from src.market.report.daily_report_generator import DailyReportGenerator
 from src.specs import load_market_daily_spec
 
 
@@ -54,7 +55,7 @@ class StrongStockMetricTests(unittest.TestCase):
         self.assertEqual(metrics["emotion_score"], 85.0)
 
 
-class StrongStockSelectorTests(unittest.TestCase):
+class StrongStockDbMixin:
     def _db(self, tmpdir: str) -> DatabaseConnection:
         db = DatabaseConnection(Path(tmpdir) / "market_daily.db")
         conn = db.get_connection()
@@ -109,6 +110,8 @@ class StrongStockSelectorTests(unittest.TestCase):
             ),
         )
 
+
+class StrongStockSelectorTests(StrongStockDbMixin, unittest.TestCase):
     def test_selector_keeps_only_strong_channel_hits(self) -> None:
         with TemporaryDirectory() as tmpdir:
             db = self._db(tmpdir)
@@ -128,6 +131,24 @@ class StrongStockSelectorTests(unittest.TestCase):
             self.assertEqual(count, 2)
             self.assertEqual([row["symbol"] for row in rows], ["sz.000001", "sh.600001"])
             self.assertEqual(rows[0]["pool_group"], "top20")
+
+
+class StrongStockReportTests(StrongStockDbMixin, unittest.TestCase):
+    def test_report_data_includes_strong_board_summary(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db = self._db(tmpdir)
+            self._insert_feature(db, "sz.000001", "趋势票A", 90.0, 2_100_000_000, True, False)
+            self._insert_feature(db, "sz.000002", "趋势票B", 80.0, 1_900_000_000, True, False)
+            ObservationPoolSelector(db).build("2026-04-24")
+
+            report_data = DailyReportGenerator(db)._build_report_data("2026-04-24")
+
+            summary = report_data["strong_board_summary"]
+            self.assertEqual(summary[0]["board_name"], "人工智能")
+            self.assertEqual(summary[0]["strong_count"], 2)
+            self.assertEqual(summary[0]["strong_amount"], 4_000_000_000)
+            self.assertEqual(summary[0]["top_stock_name"], "趋势票A")
+            self.assertEqual(summary[0]["avg_strong_score"], 85.0)
 
 
 if __name__ == "__main__":
