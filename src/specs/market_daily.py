@@ -63,7 +63,7 @@ def _require_mapping(path: Path, payload: Dict[str, Any], key: str) -> Dict[str,
 
 
 def _validate_strategy(path: Path, payload: Dict[str, Any]) -> None:
-    _require_keys(path, payload, ["board_feature", "stock_feature", "observation_pool"])
+    _require_keys(path, payload, ["board_feature", "stock_feature", "observation_pool", "strong_stock_pool"])
     board_feature = _require_mapping(path, payload, "board_feature")
     _require_keys(path, board_feature, ["weights", "negative_pct_penalties", "phase_thresholds"])
 
@@ -89,6 +89,41 @@ def _validate_strategy(path: Path, payload: Dict[str, Any]) -> None:
         ["top_board_limit", "top20_size", "backup_size", "max_per_board", "max_per_board_role", "role_targets"],
     )
 
+    strong_stock_pool = _require_mapping(path, payload, "strong_stock_pool")
+    _require_keys(
+        path,
+        strong_stock_pool,
+        [
+            "trend_channel",
+            "emotion_channel",
+            "capacity_bonus",
+            "multi_channel_bonus",
+            "capacity_label_min_amount",
+            "board_concentration",
+            "selection",
+        ],
+    )
+    trend_channel = _require_mapping(path, strong_stock_pool, "trend_channel")
+    _require_keys(
+        path,
+        trend_channel,
+        [
+            "min_amount",
+            "min_trend_score",
+            "min_medium_window_score",
+            "min_weak_window_score",
+            "min_medium_window_count",
+            "window_weights",
+            "window_score_bands",
+        ],
+    )
+    emotion_channel = _require_mapping(path, strong_stock_pool, "emotion_channel")
+    _require_keys(path, emotion_channel, ["min_amount", "limit_up_score", "streak_2_score", "streak_3_score"])
+    board_concentration = _require_mapping(path, strong_stock_pool, "board_concentration")
+    _require_keys(path, board_concentration, ["min_count", "min_amount"])
+    selection = _require_mapping(path, strong_stock_pool, "selection")
+    _require_keys(path, selection, ["main_pool_group", "main_pool_limit", "backup_size"])
+
 
 def _validate_runtime(path: Path, payload: Dict[str, Any]) -> None:
     _require_keys(path, payload, ["quality", "pipeline"])
@@ -104,11 +139,13 @@ def _validate_runtime(path: Path, payload: Dict[str, Any]) -> None:
 
 def _validate_presentation(path: Path, payload: Dict[str, Any]) -> None:
     _require_keys(path, payload, ["roles", "markdown", "html"])
+    roles = _require_mapping(path, payload, "roles")
+    _require_keys(path, roles, ["trend_strong", "emotion_strong", "watchlist"])
     markdown = _require_mapping(path, payload, "markdown")
     _require_keys(
         path,
         markdown,
-        ["report_title", "market_overview", "top_boards", "observation_pool", "observation_reason", "role_distribution", "board_distribution", "backup_pool"],
+        ["report_title", "market_overview", "top_boards", "observation_pool", "observation_reason", "role_distribution", "board_distribution", "strong_board_summary", "backup_pool"],
     )
     html = _require_mapping(path, payload, "html")
     _require_keys(path, html, ["page_title", "hero", "sections", "labels"])

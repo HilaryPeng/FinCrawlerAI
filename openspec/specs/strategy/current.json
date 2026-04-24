@@ -151,6 +151,65 @@
       "news_heat_score": 0.1
     }
   },
+  "strong_stock_pool": {
+    "trend_channel": {
+      "min_amount": 1500000000.0,
+      "min_trend_score": 65.0,
+      "min_medium_window_score": 60.0,
+      "min_weak_window_score": 30.0,
+      "min_medium_window_count": 2,
+      "window_weights": {
+        "5d": 0.2,
+        "10d": 0.35,
+        "20d": 0.45
+      },
+      "window_score_bands": {
+        "5d": [
+          {"lte": 0.0, "score": 0.0},
+          {"lte": 5.0, "score": 30.0},
+          {"lte": 10.0, "score": 60.0},
+          {"lte": 15.0, "score": 85.0},
+          {"score": 100.0}
+        ],
+        "10d": [
+          {"lte": 0.0, "score": 0.0},
+          {"lte": 8.0, "score": 30.0},
+          {"lte": 15.0, "score": 60.0},
+          {"lte": 20.0, "score": 85.0},
+          {"score": 100.0}
+        ],
+        "20d": [
+          {"lte": 0.0, "score": 0.0},
+          {"lte": 12.0, "score": 30.0},
+          {"lte": 25.0, "score": 60.0},
+          {"lte": 35.0, "score": 85.0},
+          {"score": 100.0}
+        ]
+      }
+    },
+    "emotion_channel": {
+      "min_amount": 1000000000.0,
+      "limit_up_score": 70.0,
+      "streak_2_score": 85.0,
+      "streak_3_score": 100.0
+    },
+    "capacity_bonus": [
+      {"min_amount": 10000000000.0, "bonus": 10.0},
+      {"min_amount": 5000000000.0, "bonus": 8.0},
+      {"min_amount": 2000000000.0, "bonus": 5.0}
+    ],
+    "multi_channel_bonus": 5.0,
+    "capacity_label_min_amount": 2000000000.0,
+    "board_concentration": {
+      "min_count": 3,
+      "min_amount": 5000000000.0
+    },
+    "selection": {
+      "main_pool_group": "top20",
+      "main_pool_limit": 30,
+      "backup_size": 10
+    }
+  },
   "observation_pool": {
     "top_board_limit": 10,
     "top20_size": 20,

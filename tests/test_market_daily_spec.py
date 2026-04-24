@@ -30,6 +30,16 @@ class MarketDailySpecTests(unittest.TestCase):
         self.assertEqual(pool_spec["max_per_board_role"], 2)
         self.assertEqual(sum(pool_spec["role_targets"].values()), 20)
 
+    def test_strong_stock_pool_spec_matches_design(self) -> None:
+        spec = load_market_daily_spec()
+        strong = spec.strategy["strong_stock_pool"]
+
+        self.assertEqual(strong["trend_channel"]["min_amount"], 1_500_000_000.0)
+        self.assertEqual(strong["emotion_channel"]["min_amount"], 1_000_000_000.0)
+        self.assertEqual(strong["selection"]["main_pool_limit"], 30)
+        self.assertEqual(spec.presentation["roles"]["trend_strong"], "趋势强")
+        self.assertEqual(spec.presentation["roles"]["emotion_strong"], "情绪强")
+
 
 if __name__ == "__main__":
     unittest.main()

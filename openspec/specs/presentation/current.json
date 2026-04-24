@@ -1,18 +1,21 @@
 {
   "roles": {
+    "trend_strong": "趋势强",
+    "emotion_strong": "情绪强",
+    "watchlist": "观察补位",
     "dragon": "龙头",
     "center": "中军",
-    "follow": "扩散",
-    "watchlist": "观察补位"
+    "follow": "扩散"
   },
   "markdown": {
     "report_title": "市场观察日报",
     "market_overview": "市场总览",
     "top_boards": "主线板块 Top 10",
-    "observation_pool": "重点观察 20 只",
+    "observation_pool": "强势股池",
     "observation_reason": "观察理由",
     "role_distribution": "角色分布",
     "board_distribution": "板块分布",
+    "strong_board_summary": "强势板块聚集",
     "backup_pool": "备选池"
   },
   "html": {
@@ -26,7 +29,8 @@
     "sections": {
       "market_overview": "市场总览",
       "top_boards": "主线板块",
-      "observation_pool": "重点观察 20 只",
+      "observation_pool": "强势股池",
+      "strong_board_summary": "强势板块聚集",
       "backup_pool": "备选池"
     },
     "labels": {

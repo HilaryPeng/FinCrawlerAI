@@ -6,6 +6,9 @@ config/local_settings.py
 data/
 logs/
 .venv/
+!openspec/specs/data/
+!openspec/specs/data/current.json
+!openspec/specs/data/spec.md
 
 # Python
 __pycache__/

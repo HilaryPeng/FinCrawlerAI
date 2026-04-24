@@ -1,0 +1,82 @@
+{
+  "tables": {
+    "daily_stock_quotes": {
+      "role": "原始行情输入",
+      "unique_key": ["trade_date", "symbol"],
+      "kind": "raw"
+    },
+    "daily_stock_limits": {
+      "role": "涨停与连板输入",
+      "unique_key": ["trade_date", "symbol"],
+      "kind": "raw"
+    },
+    "stock_board_membership": {
+      "role": "股票到板块归属",
+      "unique_key": ["trade_date", "symbol", "board_name", "board_type"],
+      "kind": "raw"
+    },
+    "daily_board_quotes": {
+      "role": "板块行情输入",
+      "unique_key": ["trade_date", "board_type", "board_name"],
+      "kind": "derived"
+    },
+    "daily_market_breadth": {
+      "role": "市场总览输入",
+      "unique_key": ["trade_date"],
+      "kind": "derived"
+    },
+    "daily_stock_attention": {
+      "role": "热度与技术状态输入",
+      "unique_key": ["trade_date", "symbol", "source", "metric_type"],
+      "kind": "raw"
+    },
+    "daily_board_features": {
+      "role": "板块特征结果",
+      "unique_key": ["trade_date", "board_type", "board_name"],
+      "kind": "derived"
+    },
+    "daily_stock_features": {
+      "role": "个股特征结果",
+      "unique_key": ["trade_date", "symbol"],
+      "kind": "derived"
+    },
+    "daily_observation_pool": {
+      "role": "最终观察池",
+      "unique_key": ["trade_date", "symbol", "pool_group"],
+      "kind": "derived"
+    }
+  },
+  "contracts": {
+    "quote_ingest": "同一天回跑必须幂等更新，不允许重复插入。",
+    "report_truth_source": "日报结果以派生表为准，不得直接绕过特征层拼接页面。",
+    "quality_dependency": "行情、板块、市场总览不完整时，日报结果视为不可靠。"
+  },
+  "rebuild_dependencies": {
+    "daily_stock_quotes": [
+      "daily_market_breadth",
+      "daily_board_quotes",
+      "daily_board_features",
+      "daily_stock_features",
+      "daily_observation_pool",
+      "market_daily_report"
+    ],
+    "stock_board_membership": [
+      "daily_board_quotes",
+      "daily_board_features",
+      "daily_stock_features",
+      "daily_observation_pool",
+      "market_daily_report"
+    ],
+    "daily_stock_attention": [
+      "daily_stock_features",
+      "daily_observation_pool",
+      "market_daily_report"
+    ],
+    "news_items": [
+      "daily_board_features",
+      "daily_stock_features",
+      "daily_observation_pool",
+      "market_daily_report"
+    ]
+  }
+}
