@@ -24,7 +24,9 @@ class ObservationPoolSelector:
         self.repo = DailyObservationPoolRepository(db)
         self.board_ranker = BoardRanker(db)
         self.stock_ranker = StockRanker(db)
-        self.spec = load_market_daily_spec().strategy["observation_pool"]
+        strategy = load_market_daily_spec().strategy
+        self.spec = strategy["observation_pool"]
+        self.strong_spec = strategy["strong_stock_pool"]
 
     def build(self, trade_date: str) -> int:
         print(f"Selecting observation pool for {trade_date}...", flush=True)
@@ -44,84 +46,28 @@ class ObservationPoolSelector:
             (row["board_name"], row["board_type"]): row
             for row in board_rows
         }
-        top_board_keys = {
-            (row["board_name"], row["board_type"])
-            for row in board_rows[: int(self.spec["top_board_limit"])]
-        }
-
-        selected: List[Dict[str, Any]] = []
-        selected_symbols: Set[str] = set()
-        board_counts: Dict[Tuple[str | None, str | None], int] = {}
-        board_role_counts: Dict[Tuple[str | None, str | None, str], int] = {}
-
-        for role_tag, target in self.spec["role_targets"].items():
-            candidates = self._role_candidates(
-                stock_rows=stock_rows,
-                role_tag=role_tag,
-                top_board_keys=top_board_keys,
+        candidates = self._strong_candidates(stock_rows)
+        main_limit = int(self.strong_spec["selection"]["main_pool_limit"])
+        backup_size = int(self.strong_spec["selection"]["backup_size"])
+        main_pool_group = str(self.strong_spec["selection"]["main_pool_group"])
+        selected = [
+            self._build_pool_record(
+                trade_date=trade_date,
+                stock_row=candidate,
+                board_rank_map=board_rank_map,
+                pool_group=main_pool_group,
             )
-            taken = 0
-            for candidate in candidates:
-                symbol = candidate["symbol"]
-                board_key = (candidate.get("primary_board_name"), candidate.get("primary_board_type"))
-                if symbol in selected_symbols:
-                    continue
-                if not self._can_select(board_key, role_tag, board_counts, board_role_counts):
-                    continue
-                selected.append(
-                    self._build_pool_record(
-                        trade_date=trade_date,
-                        stock_row=candidate,
-                        board_rank_map=board_rank_map,
-                        pool_group="top20",
-                    )
-                )
-                selected_symbols.add(symbol)
-                board_counts[board_key] = board_counts.get(board_key, 0) + 1
-                role_key = (board_key[0], board_key[1], role_tag)
-                board_role_counts[role_key] = board_role_counts.get(role_key, 0) + 1
-                taken += 1
-                if taken >= target:
-                    break
-
-        if len(selected) < int(self.spec["top20_size"]):
-            for candidate in stock_rows:
-                symbol = candidate["symbol"]
-                board_key = (candidate.get("primary_board_name"), candidate.get("primary_board_type"))
-                if symbol in selected_symbols:
-                    continue
-                if not self._can_select(board_key, candidate.get("role_tag"), board_counts, board_role_counts):
-                    continue
-                selected.append(
-                    self._build_pool_record(
-                        trade_date=trade_date,
-                        stock_row=candidate,
-                        board_rank_map=board_rank_map,
-                        pool_group="top20",
-                    )
-                )
-                selected_symbols.add(symbol)
-                board_counts[board_key] = board_counts.get(board_key, 0) + 1
-                role_key = (board_key[0], board_key[1], candidate.get("role_tag"))
-                board_role_counts[role_key] = board_role_counts.get(role_key, 0) + 1
-                if len(selected) >= int(self.spec["top20_size"]):
-                    break
-
-        backup_candidates = []
-        for candidate in stock_rows:
-            symbol = candidate["symbol"]
-            if symbol in selected_symbols:
-                continue
-            backup_candidates.append(
-                self._build_pool_record(
-                    trade_date=trade_date,
-                    stock_row=candidate,
-                    board_rank_map=board_rank_map,
-                    pool_group="backup",
-                )
+            for candidate in candidates[:main_limit]
+        ]
+        backup_candidates = [
+            self._build_pool_record(
+                trade_date=trade_date,
+                stock_row=candidate,
+                board_rank_map=board_rank_map,
+                pool_group="backup",
             )
-            if len(backup_candidates) >= int(self.spec["backup_size"]):
-                break
+            for candidate in candidates[main_limit: main_limit + backup_size]
+        ]
 
         records = selected + backup_candidates
         unique_keys = self.repo.get_unique_keys()
@@ -130,10 +76,42 @@ class ObservationPoolSelector:
         role_summary = self._role_summary(selected)
         print(
             f"Stored {count} observation pool rows for {trade_date}; "
-            f"top20={len(selected)} backup={len(backup_candidates)} roles={role_summary}",
+            f"{main_pool_group}={len(selected)} backup={len(backup_candidates)} roles={role_summary}",
             flush=True,
         )
         return count
+
+    def _strong_candidates(self, stock_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        candidates = []
+        for row in stock_rows:
+            strong_metrics = self._strong_metrics(row)
+            if not (
+                strong_metrics.get("trend_channel_hit")
+                or strong_metrics.get("emotion_channel_hit")
+            ):
+                continue
+            enriched = dict(row)
+            enriched["strong_metrics"] = strong_metrics
+            candidates.append(enriched)
+        return sorted(
+            candidates,
+            key=lambda row: (
+                -float(row.get("final_score") or 0.0),
+                -float(row.get("amount") or 0.0),
+                str(row.get("symbol") or ""),
+            ),
+        )
+
+    def _strong_metrics(self, stock_row: Dict[str, Any]) -> Dict[str, Any]:
+        feature_json = stock_row.get("feature_json")
+        if not feature_json:
+            return {}
+        try:
+            feature_data = json.loads(feature_json)
+        except Exception:
+            return {}
+        metrics = feature_data.get("strong_metrics")
+        return metrics if isinstance(metrics, dict) else {}
 
     def _role_candidates(
         self,
@@ -210,7 +188,11 @@ class ObservationPoolSelector:
     ) -> str:
         parts = []
         role_tag = stock_row.get("role_tag")
-        if role_tag == "dragon":
+        if role_tag == "trend_strong":
+            parts.append("趋势强势候选")
+        elif role_tag == "emotion_strong":
+            parts.append("情绪强势候选")
+        elif role_tag == "dragon":
             parts.append("高强度龙头候选")
         elif role_tag == "center":
             parts.append("容量中军候选")

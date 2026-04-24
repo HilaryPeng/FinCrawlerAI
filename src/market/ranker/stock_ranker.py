@@ -24,6 +24,7 @@ class StockRanker:
                 primary_board_name,
                 primary_board_type,
                 role_tag,
+                amount,
                 dragon_score,
                 center_score,
                 follow_score,
@@ -34,7 +35,7 @@ class StockRanker:
                 feature_json
             FROM daily_stock_features
             WHERE trade_date = ?
-            ORDER BY final_score DESC, symbol ASC
+            ORDER BY final_score DESC, amount DESC, symbol ASC
             """,
             (trade_date,),
         )
