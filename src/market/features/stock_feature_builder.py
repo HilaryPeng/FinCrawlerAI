@@ -571,7 +571,7 @@ class StockFeatureBuilder:
             """,
             (symbol, trade_date, window),
         )
-        if len(rows) < 2:
+        if len(rows) < window:
             return None
         latest = self._to_float(rows[0]["close"])
         oldest = self._to_float(rows[-1]["close"])

@@ -55,6 +55,45 @@ class StrongStockMetricTests(unittest.TestCase):
         self.assertEqual(metrics["emotion_score"], 85.0)
 
 
+class StrongStockWindowReturnTests(unittest.TestCase):
+    def test_window_return_requires_full_window_history(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db = DatabaseConnection(Path(tmpdir) / "market_daily.db")
+            conn = db.get_connection()
+            try:
+                conn.executescript(TABLE_SCHEMAS["daily_stock_quotes"])
+                for day in range(1, 20):
+                    conn.execute(
+                        """
+                        INSERT INTO daily_stock_quotes (
+                            trade_date, symbol, name, close, created_at
+                        )
+                        VALUES (?, ?, ?, ?, datetime('now'))
+                        """,
+                        (f"2026-04-{day:02d}", "sz.000001", "测试股", 100 + day, ),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            builder = StockFeatureBuilder.__new__(StockFeatureBuilder)
+            builder.db = db
+
+            self.assertIsNone(builder._get_window_return("2026-04-19", "sz.000001", 20))
+
+            db.execute(
+                """
+                INSERT INTO daily_stock_quotes (
+                    trade_date, symbol, name, close, created_at
+                )
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                ("2026-04-20", "sz.000001", "测试股", 120.0),
+            )
+
+            self.assertEqual(builder._get_window_return("2026-04-20", "sz.000001", 20), 18.8119)
+
+
 class StrongStockDbMixin:
     def _db(self, tmpdir: str) -> DatabaseConnection:
         db = DatabaseConnection(Path(tmpdir) / "market_daily.db")
