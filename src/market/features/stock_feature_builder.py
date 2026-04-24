@@ -23,7 +23,9 @@ class StockFeatureBuilder:
     def __init__(self, db: DatabaseConnection):
         self.db = db
         self.repo = DailyStockFeaturesRepository(db)
-        self.spec = load_market_daily_spec().strategy["stock_feature"]
+        strategy = load_market_daily_spec().strategy
+        self.spec = strategy["stock_feature"]
+        self.strong_spec = strategy["strong_stock_pool"]
 
     def build(self, trade_date: str) -> int:
         """Build and store stock features for a trade date."""
@@ -124,7 +126,17 @@ class StockFeatureBuilder:
         )
         pct_chg_3d = self._get_window_return(trade_date, symbol, 3)
         pct_chg_5d = self._get_window_return(trade_date, symbol, 5)
+        pct_chg_10d = self._get_window_return(trade_date, symbol, 10)
+        pct_chg_20d = self._get_window_return(trade_date, symbol, 20)
         amount_rank_in_board = amount_rank_by_board.get((board_name or "", symbol), 0)
+        strong_metrics = self._compute_strong_stock_metrics(
+            amount=amount,
+            pct_chg_5d=pct_chg_5d,
+            pct_chg_10d=pct_chg_10d,
+            pct_chg_20d=pct_chg_20d,
+            limit_up=limit_up,
+            limit_up_streak=limit_up_streak,
+        )
 
         dragon_score = self._compute_dragon_score(
             pct_chg=pct_chg,
@@ -180,7 +192,7 @@ class StockFeatureBuilder:
             pct_chg_3d=pct_chg_3d,
             risk_flags=risk_flags,
         )
-        final_score = self._compute_final_score(
+        legacy_final_score = self._compute_final_score(
             role_tag=role_tag,
             dragon_score=dragon_score,
             center_score=center_score,
@@ -189,14 +201,21 @@ class StockFeatureBuilder:
             news_heat_score=news_metrics["news_heat_score"],
             risk_score=risk_score,
         )
+        strong_role_tag = self._pick_strong_role_tag(strong_metrics)
+        final_role_tag = strong_role_tag if strong_role_tag != "watchlist" else role_tag
+        final_score = strong_metrics["strong_score"]
 
         feature_json = json.dumps(
             {
                 "pct_chg_3d": pct_chg_3d,
                 "pct_chg_5d": pct_chg_5d,
+                "pct_chg_10d": pct_chg_10d,
+                "pct_chg_20d": pct_chg_20d,
                 "amount_rank_in_board": amount_rank_in_board,
                 "close": self._to_float(row.get("close")),
                 "days_in_limit_up_last_20": days_in_limit_up_last_20,
+                "legacy_role_tag": role_tag,
+                "legacy_final_score": legacy_final_score,
                 "board_phase_hint": board_phase_hint,
                 "jygs_signal_score": news_metrics["jygs_signal_score"],
                 "jygs_signal_flags": news_metrics["jygs_signal_flags"],
@@ -214,6 +233,7 @@ class StockFeatureBuilder:
                 "base_limit_reason": limit_reason,
                 "effective_limit_reason": effective_limit_reason,
                 "effective_reason_source": effective_reason_source,
+                "strong_metrics": strong_metrics,
             },
             ensure_ascii=False,
         )
@@ -244,7 +264,7 @@ class StockFeatureBuilder:
             "follow_score": follow_score,
             "risk_score": risk_score,
             "final_score": final_score,
-            "role_tag": role_tag,
+            "role_tag": final_role_tag,
             "risk_flags": json.dumps(risk_flags, ensure_ascii=False),
             "feature_json": feature_json,
         }
@@ -558,6 +578,103 @@ class StockFeatureBuilder:
         if latest is None or oldest in (None, 0):
             return None
         return round((latest - oldest) / oldest * 100, 4)
+
+    def _score_trend_window(self, window: str, pct_chg: float | None) -> float:
+        if pct_chg is None:
+            return 0.0
+        bands = self.strong_spec["trend_channel"]["window_score_bands"][window]
+        for band in bands:
+            if "lte" not in band or pct_chg <= float(band["lte"]):
+                return float(band["score"])
+        return 0.0
+
+    def _compute_emotion_score(self, limit_up: int, limit_up_streak: int) -> float:
+        config = self.strong_spec["emotion_channel"]
+        scores: List[float] = []
+        if limit_up:
+            scores.append(float(config["limit_up_score"]))
+        if limit_up_streak >= 3:
+            scores.append(float(config["streak_3_score"]))
+        elif limit_up_streak == 2:
+            scores.append(float(config["streak_2_score"]))
+        return max(scores) if scores else 0.0
+
+    def _compute_capacity_bonus(self, amount: float) -> float:
+        for tier in self.strong_spec["capacity_bonus"]:
+            if amount >= float(tier["min_amount"]):
+                return float(tier["bonus"])
+        return 0.0
+
+    def _compute_strong_stock_metrics(
+        self,
+        amount: float,
+        pct_chg_5d: float | None,
+        pct_chg_10d: float | None,
+        pct_chg_20d: float | None,
+        limit_up: int,
+        limit_up_streak: int,
+    ) -> Dict[str, Any]:
+        trend_config = self.strong_spec["trend_channel"]
+        emotion_config = self.strong_spec["emotion_channel"]
+        window_scores = {
+            "5d": self._score_trend_window("5d", pct_chg_5d),
+            "10d": self._score_trend_window("10d", pct_chg_10d),
+            "20d": self._score_trend_window("20d", pct_chg_20d),
+        }
+        weights = trend_config["window_weights"]
+        trend_score = round(
+            window_scores["5d"] * float(weights["5d"])
+            + window_scores["10d"] * float(weights["10d"])
+            + window_scores["20d"] * float(weights["20d"]),
+            2,
+        )
+        available_windows = [pct_chg_5d, pct_chg_10d, pct_chg_20d]
+        medium_count = sum(
+            1 for score in window_scores.values()
+            if score >= float(trend_config["min_medium_window_score"])
+        )
+        all_windows_present = all(value is not None for value in available_windows)
+        trend_channel_hit = (
+            all_windows_present
+            and amount >= float(trend_config["min_amount"])
+            and trend_score >= float(trend_config["min_trend_score"])
+            and medium_count >= int(trend_config["min_medium_window_count"])
+            and min(window_scores.values()) >= float(trend_config["min_weak_window_score"])
+        )
+        emotion_score = self._compute_emotion_score(limit_up, limit_up_streak)
+        emotion_channel_hit = (
+            amount >= float(emotion_config["min_amount"])
+            and emotion_score > 0
+        )
+        capacity_bonus = self._compute_capacity_bonus(amount)
+        labels: List[str] = []
+        if trend_channel_hit:
+            labels.append("trend_strong")
+        if emotion_channel_hit:
+            labels.append("emotion_strong")
+        if amount >= float(self.strong_spec["capacity_label_min_amount"]):
+            labels.append("capacity_strong")
+        base_score = max(trend_score if trend_channel_hit else 0.0, emotion_score if emotion_channel_hit else 0.0)
+        multi_channel_bonus = float(self.strong_spec["multi_channel_bonus"]) if trend_channel_hit and emotion_channel_hit else 0.0
+        strong_score = round(min(base_score + capacity_bonus + multi_channel_bonus, 100.0), 2)
+        return {
+            "trend_score": trend_score,
+            "trend_window_scores": window_scores,
+            "trend_channel_hit": trend_channel_hit,
+            "emotion_score": emotion_score,
+            "emotion_channel_hit": emotion_channel_hit,
+            "capacity_bonus": capacity_bonus,
+            "multi_channel_bonus": multi_channel_bonus,
+            "strong_score": strong_score,
+            "labels": labels,
+        }
+
+    def _pick_strong_role_tag(self, strong_metrics: Dict[str, Any]) -> str:
+        if strong_metrics.get("trend_channel_hit"):
+            return "trend_strong"
+        if strong_metrics.get("emotion_channel_hit"):
+            return "emotion_strong"
+        return "watchlist"
 
     def _compute_dragon_score(
         self,

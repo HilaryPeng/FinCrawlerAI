@@ -140,7 +140,7 @@ def _validate_runtime(path: Path, payload: Dict[str, Any]) -> None:
 def _validate_presentation(path: Path, payload: Dict[str, Any]) -> None:
     _require_keys(path, payload, ["roles", "markdown", "html"])
     roles = _require_mapping(path, payload, "roles")
-    _require_keys(path, roles, ["trend_strong", "emotion_strong", "watchlist"])
+    _require_keys(path, roles, ["trend_strong", "emotion_strong", "capacity_strong", "watchlist"])
     markdown = _require_mapping(path, payload, "markdown")
     _require_keys(
         path,

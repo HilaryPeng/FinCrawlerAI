@@ -2,6 +2,7 @@
   "roles": {
     "trend_strong": "趋势强",
     "emotion_strong": "情绪强",
+    "capacity_strong": "容量强",
     "watchlist": "观察补位",
     "dragon": "龙头",
     "center": "中军",

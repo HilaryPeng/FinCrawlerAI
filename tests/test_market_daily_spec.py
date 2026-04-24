@@ -39,6 +39,7 @@ class MarketDailySpecTests(unittest.TestCase):
         self.assertEqual(strong["selection"]["main_pool_limit"], 30)
         self.assertEqual(spec.presentation["roles"]["trend_strong"], "趋势强")
         self.assertEqual(spec.presentation["roles"]["emotion_strong"], "情绪强")
+        self.assertEqual(spec.presentation["roles"]["capacity_strong"], "容量强")
 
 
 if __name__ == "__main__":
