@@ -149,6 +149,44 @@ class StrongStockDbMixin:
             ),
         )
 
+    def _insert_board_feature(
+        self,
+        db: DatabaseConnection,
+        board_name: str,
+        board_type: str,
+        board_score: float,
+        pct_chg: float,
+    ) -> None:
+        db.execute(
+            """
+            INSERT INTO daily_board_features (
+                trade_date, board_name, board_type, pct_chg, up_count, down_count,
+                limit_up_count, core_stock_count, news_count, news_heat_score,
+                dragon_strength, center_strength, breadth_score, continuity_score,
+                board_score, phase_hint, feature_json, created_at
+            )
+            VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, 'expand', '{}', datetime('now'))
+            """,
+            ("2026-04-24", board_name, board_type, pct_chg, board_score),
+        )
+
+    def _insert_membership(
+        self,
+        db: DatabaseConnection,
+        symbol: str,
+        board_name: str,
+        board_type: str,
+    ) -> None:
+        db.execute(
+            """
+            INSERT INTO stock_board_membership (
+                trade_date, symbol, board_name, board_type, is_primary, source, created_at
+            )
+            VALUES (?, ?, ?, ?, 1, 'test', datetime('now'))
+            """,
+            ("2026-04-24", symbol, board_name, board_type),
+        )
+
 
 class StrongStockSelectorTests(StrongStockDbMixin, unittest.TestCase):
     def test_selector_keeps_only_strong_channel_hits(self) -> None:
@@ -188,6 +226,29 @@ class StrongStockReportTests(StrongStockDbMixin, unittest.TestCase):
             self.assertEqual(summary[0]["strong_amount"], 4_000_000_000)
             self.assertEqual(summary[0]["top_stock_name"], "趋势票A")
             self.assertEqual(summary[0]["avg_strong_score"], 85.0)
+
+    def test_report_prefers_trading_board_over_csrc_board(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db = self._db(tmpdir)
+            self._insert_feature(db, "sz.000001", "趋势票A", 90.0, 2_100_000_000, True, False)
+            self._insert_feature(db, "sz.000002", "趋势票B", 80.0, 1_900_000_000, True, False)
+            self._insert_board_feature(db, "半导体", "industry", 90.0, 2.0)
+            self._insert_board_feature(db, "共封装光学(CPO)", "concept", 80.0, 1.5)
+            self._insert_board_feature(db, "PCB概念", "concept", 95.0, 3.0)
+            self._insert_membership(db, "sz.000001", "半导体", "industry")
+            self._insert_membership(db, "sz.000001", "共封装光学(CPO)", "concept")
+            self._insert_membership(db, "sz.000002", "PCB概念", "concept")
+            ObservationPoolSelector(db).build("2026-04-24")
+
+            report_data = DailyReportGenerator(db)._build_report_data("2026-04-24")
+
+            pool = report_data["observation_pool"]
+            self.assertEqual(pool[0]["board_name"], "共封装光学(CPO)")
+            self.assertEqual(pool[0]["csrc_board_name"], "人工智能")
+            self.assertEqual(pool[0]["related_board_names"], ["半导体"])
+            self.assertEqual(pool[1]["board_name"], "PCB概念")
+            self.assertEqual(report_data["strong_board_summary"][0]["board_name"], "共封装光学(CPO)")
+            self.assertEqual(report_data["strong_board_summary"][1]["board_name"], "PCB概念")
 
 
 if __name__ == "__main__":

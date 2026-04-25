@@ -134,7 +134,7 @@ class DailyReportGenerator:
             """,
             (trade_date, pool_group),
         )
-        return [dict(row) for row in rows]
+        return self._attach_trading_boards(trade_date, [dict(row) for row in rows])
 
     def _get_pool_role_summary(self, trade_date: str) -> List[Dict[str, Any]]:
         rows = self.db.fetchall(
@@ -151,6 +151,19 @@ class DailyReportGenerator:
         return [dict(row) for row in rows]
 
     def _get_pool_board_distribution(self, trade_date: str) -> List[Dict[str, Any]]:
+        rows = self._get_observation_pool(trade_date)
+        counts: Dict[str, int] = {}
+        for row in rows:
+            board_name = row.get("board_name")
+            if not board_name:
+                continue
+            counts[str(board_name)] = counts.get(str(board_name), 0) + 1
+        return [
+            {"board_name": board_name, "cnt": cnt}
+            for board_name, cnt in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        ]
+
+    def _get_legacy_pool_board_distribution(self, trade_date: str) -> List[Dict[str, Any]]:
         rows = self.db.fetchall(
             """
             SELECT board_name, COUNT(*) AS cnt
@@ -164,8 +177,75 @@ class DailyReportGenerator:
         )
         return [dict(row) for row in rows]
 
-    def _get_strong_board_summary(self, trade_date: str) -> List[Dict[str, Any]]:
+    def _get_trading_board_map(self, trade_date: str) -> Dict[str, Dict[str, Any]]:
         rows = self.db.fetchall(
+            """
+            SELECT
+                m.symbol,
+                m.board_name,
+                m.board_type,
+                COALESCE(bf.board_score, 0) AS board_score,
+                COALESCE(bf.pct_chg, 0) AS pct_chg
+            FROM stock_board_membership m
+            LEFT JOIN daily_board_features bf
+              ON m.trade_date = bf.trade_date
+             AND m.board_name = bf.board_name
+             AND m.board_type = bf.board_type
+            WHERE m.trade_date = ?
+              AND m.board_type IN ('concept', 'industry')
+            """,
+            (trade_date,),
+        )
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            item = dict(row)
+            grouped.setdefault(str(item["symbol"]), []).append(item)
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for symbol, memberships in grouped.items():
+            sorted_memberships = sorted(
+                memberships,
+                key=lambda item: (
+                    0 if item.get("board_type") == "concept" else 1,
+                    -float(item.get("board_score") or 0.0),
+                    -float(item.get("pct_chg") or 0.0),
+                    str(item.get("board_name") or ""),
+                ),
+            )
+            primary = sorted_memberships[0]
+            related = [
+                str(item["board_name"])
+                for item in sorted_memberships[1:6]
+                if item.get("board_name")
+            ]
+            result[symbol] = {
+                "trading_board_name": primary.get("board_name"),
+                "trading_board_type": primary.get("board_type"),
+                "related_board_names": related,
+            }
+        return result
+
+    def _attach_trading_boards(self, trade_date: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        trading_map = self._get_trading_board_map(trade_date)
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            csrc_board_name = item.get("board_name")
+            trading = trading_map.get(str(item.get("symbol") or ""), {})
+            trading_board_name = trading.get("trading_board_name")
+            item["csrc_board_name"] = csrc_board_name
+            item["trading_board_name"] = trading_board_name
+            item["trading_board_type"] = trading.get("trading_board_type")
+            item["related_board_names"] = trading.get("related_board_names", [])
+            if trading_board_name:
+                item["board_name"] = trading_board_name
+            return_board_name = item.get("board_name")
+            item["display_board_name"] = return_board_name
+            result.append(item)
+        return result
+
+    def _get_strong_board_summary(self, trade_date: str) -> List[Dict[str, Any]]:
+        raw_rows = self.db.fetchall(
             """
             SELECT
                 p.board_name,
@@ -184,6 +264,7 @@ class DailyReportGenerator:
             """,
             (trade_date,),
         )
+        rows = self._attach_trading_boards(trade_date, [dict(row) for row in raw_rows])
         grouped: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             board_name = row["board_name"]
