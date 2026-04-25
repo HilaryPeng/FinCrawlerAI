@@ -22,6 +22,20 @@ class BoardsCollector:
     """Collector for industry and concept board data."""
 
     MEMBER_PROGRESS_EVERY = 20
+    TRADING_BOARD_KEYWORDS = (
+        "CPO",
+        "PCB",
+        "光通信",
+        "通信",
+        "算力",
+        "铜缆",
+        "液冷",
+        "服务器",
+        "AI",
+        "半导体",
+        "电池",
+    )
+    TRADING_BOARD_MAX_MEMBERS = 120
     
     def __init__(self, db: DatabaseConnection):
         self.db = db
@@ -217,7 +231,13 @@ class BoardsCollector:
         except Exception:
             return None
     
-    def collect_board_members(self, trade_date: str, board_name: str, board_type: str) -> int:
+    def collect_board_members(
+        self,
+        trade_date: str,
+        board_name: str,
+        board_type: str,
+        max_members: int | None = None,
+    ) -> int:
         """
         Collect stock membership for a specific board.
         
@@ -246,6 +266,9 @@ class BoardsCollector:
             print(f"No board members found for {board_type}:{board_name}", flush=True)
             return 0
 
+        if max_members and max_members > 0:
+            records = records[:max_members]
+
         for record in records:
             record["trade_date"] = trade_date
             record["board_name"] = board_name
@@ -259,6 +282,95 @@ class BoardsCollector:
             flush=True,
         )
         return count
+
+    def collect_trading_board_memberships(
+        self,
+        trade_date: str,
+        concept_limit: int = 80,
+        industry_limit: int = 40,
+        max_members_per_board: int = TRADING_BOARD_MAX_MEMBERS,
+    ) -> int:
+        """Collect focused concept/industry board memberships for report attribution."""
+        candidates = self._select_trading_board_candidates(
+            trade_date=trade_date,
+            concept_limit=concept_limit,
+            industry_limit=industry_limit,
+        )
+        if not candidates:
+            print(f"No trading board candidates found for {trade_date}", flush=True)
+            return 0
+
+        total = 0
+        for index, board in enumerate(candidates, start=1):
+            total += self.collect_board_members(
+                trade_date=trade_date,
+                board_name=str(board["board_name"]),
+                board_type=str(board["board_type"]),
+                max_members=max_members_per_board,
+            )
+            if index % self.MEMBER_PROGRESS_EVERY == 0 or index == len(candidates):
+                print(
+                    f"[trading membership progress] processed={index}/{len(candidates)} stored={total}",
+                    flush=True,
+                )
+        return total
+
+    def _select_trading_board_candidates(
+        self,
+        trade_date: str,
+        concept_limit: int = 80,
+        industry_limit: int = 40,
+    ) -> List[Dict[str, Any]]:
+        """Select ranked concept/industry boards plus keyword matches."""
+        rows = self.db.fetchall(
+            """
+            SELECT board_name, board_type, board_score, pct_chg
+            FROM daily_board_features
+            WHERE trade_date = ?
+              AND board_type IN ('concept', 'industry')
+              AND board_name IS NOT NULL
+            """,
+            (trade_date,),
+        )
+        boards = [dict(row) for row in rows]
+        if not boards:
+            return []
+
+        def sort_key(board: Dict[str, Any]) -> tuple:
+            return (
+                -float(self._to_float(board.get("board_score")) or 0.0),
+                -float(self._to_float(board.get("pct_chg")) or 0.0),
+                str(board.get("board_name") or ""),
+            )
+
+        concepts = sorted(
+            [board for board in boards if board.get("board_type") == "concept"],
+            key=sort_key,
+        )[:concept_limit]
+        industries = sorted(
+            [board for board in boards if board.get("board_type") == "industry"],
+            key=sort_key,
+        )[:industry_limit]
+        keyword_matches = sorted(
+            [
+                board for board in boards
+                if any(keyword in str(board.get("board_name") or "") for keyword in self.TRADING_BOARD_KEYWORDS)
+            ],
+            key=lambda board: (
+                0 if board.get("board_type") == "concept" else 1,
+                *sort_key(board),
+            ),
+        )
+
+        selected: List[Dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for board in [*concepts, *industries, *keyword_matches]:
+            key = (str(board.get("board_name") or ""), str(board.get("board_type") or ""))
+            if not key[0] or not key[1] or key in seen:
+                continue
+            selected.append(board)
+            seen.add(key)
+        return selected
 
     def _collect_all_board_members(self, trade_date: str, board_records: List[Dict[str, Any]]) -> int:
         """Collect membership for all fetched boards."""
