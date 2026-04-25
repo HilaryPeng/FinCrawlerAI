@@ -54,6 +54,47 @@ class RunMarketDailyJobRetryTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(result["quotes"], 4600)
 
+    def test_skips_trading_board_memberships_when_disabled(self) -> None:
+        class FakeBoardsCollector:
+            called = False
+
+            def collect_trading_board_memberships(self, trade_date: str) -> int:
+                self.called = True
+                return 12
+
+        collector = FakeBoardsCollector()
+
+        result = run_market_daily_job.maybe_collect_trading_board_memberships(
+            boards_collector=collector,
+            trade_date="2026-04-24",
+            enabled=False,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertFalse(collector.called)
+
+    def test_collects_trading_board_memberships_when_enabled(self) -> None:
+        class FakeBoardsCollector:
+            trade_dates: list[str]
+
+            def __init__(self) -> None:
+                self.trade_dates = []
+
+            def collect_trading_board_memberships(self, trade_date: str) -> int:
+                self.trade_dates.append(trade_date)
+                return 12
+
+        collector = FakeBoardsCollector()
+
+        result = run_market_daily_job.maybe_collect_trading_board_memberships(
+            boards_collector=collector,
+            trade_date="2026-04-24",
+            enabled=True,
+        )
+
+        self.assertEqual(result, 12)
+        self.assertEqual(collector.trade_dates, ["2026-04-24"])
+
 
 if __name__ == "__main__":
     unittest.main()

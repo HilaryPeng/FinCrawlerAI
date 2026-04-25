@@ -147,12 +147,28 @@ def run_collection_with_retry(
     return collect_result, retry_count
 
 
+def maybe_collect_trading_board_memberships(
+    *,
+    boards_collector,
+    trade_date: str,
+    enabled: bool,
+) -> int:
+    if not enabled:
+        return 0
+    return boards_collector.collect_trading_board_memberships(trade_date)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily market pipeline on the server")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="Trade date in YYYY-MM-DD format")
     parser.add_argument("--with-news", action="store_true", help="Also collect news")
     parser.add_argument("--news-sources", default="jygs", help="Comma-separated news sources, e.g. jygs,cailian")
     parser.add_argument("--with-attention", action="store_true", help="Also collect attention / screener data")
+    parser.add_argument(
+        "--with-trading-board-members",
+        action="store_true",
+        help="Also collect focused concept/industry board members for trading-board attribution",
+    )
     parser.add_argument(
         "--check-trade-date",
         action="store_true",
@@ -217,8 +233,14 @@ def main() -> int:
     print(f"unified_board_quotes_inserted={unified_count}", flush=True)
 
     board_feature_count = BoardFeatureBuilder(db).build(trade_date)
+    trading_membership_count = maybe_collect_trading_board_memberships(
+        boards_collector=BoardsCollector(db),
+        trade_date=trade_date,
+        enabled=args.with_trading_board_members,
+    )
     stock_feature_count = StockFeatureBuilder(db).build(trade_date)
     print(f"board_features={board_feature_count}", flush=True)
+    print(f"trading_board_membership_inserted={trading_membership_count}", flush=True)
     print(f"stock_features={stock_feature_count}", flush=True)
 
     observation_count = ObservationPoolSelector(db).build(trade_date)
