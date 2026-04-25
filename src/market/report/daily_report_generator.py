@@ -383,6 +383,9 @@ class DailyReportGenerator:
             lines.append(f"### {index}. {row['name']} ({row['symbol']})")
             lines.append(f"- 角色：{self._role_label(row['role_tag'])}")
             lines.append(f"- 板块：{row.get('board_name')}")
+            related_board_text = self._related_board_text(row)
+            if related_board_text:
+                lines.append(f"- 相关标签：{related_board_text}")
             lines.append(f"- 原因：{row.get('selected_reason')}")
             lines.append(f"- 观察点：{row.get('watch_points')}")
             lines.append(f"- 风险：{row.get('risk_flags')}")
@@ -1366,6 +1369,12 @@ class DailyReportGenerator:
 
     def _render_observation_card(self, index: int, row: Dict[str, Any]) -> str:
         role_tag = row.get("role_tag") or "watchlist"
+        related_board_text = self._related_board_text(row)
+        related_chip = (
+            f'<span class="chip chip-board-muted">相关 {self._esc(related_board_text)}</span>'
+            if related_board_text
+            else ""
+        )
         return f"""
         <article class="pool-card" id="stock-{self._esc(row['symbol'])}">
           <button type="button" class="pool-summary" data-modal-open="modal-{self._esc(row['symbol'])}">
@@ -1383,6 +1392,7 @@ class DailyReportGenerator:
             <div class="pool-meta">
               <span class="chip chip-role chip-{self._esc(role_tag)}">{self._role_label(role_tag)}</span>
               <span class="chip chip-board">{self._esc(row.get('board_name'))}</span>
+              {related_chip}
               <span class="chip">{self._esc(self.presentation['html']['labels']['board_rank'])} {self._fmt_number(row.get('board_rank'))}</span>
               <span class="chip">{self._esc(self.presentation['html']['labels']['stock_rank'])} {self._fmt_number(row.get('stock_rank'))}</span>
             </div>
@@ -1419,6 +1429,7 @@ class DailyReportGenerator:
                       <strong>{self._esc(self.presentation['html']['labels']['board_rank'])} {self._fmt_number(row.get('board_rank'))} · {self._esc(self.presentation['html']['labels']['stock_rank'])} {self._fmt_number(row.get('stock_rank'))}</strong>
                     </div>
                   </div>
+                  {self._render_related_board_block(row)}
                   <div><strong>{self._esc(self.presentation['html']['labels']['modal_selected_reason'])}</strong><br>{self._esc(row.get('selected_reason'))}</div>
                   <div><strong>{self._esc(self.presentation['html']['labels']['modal_watch_points'])}</strong><br>{self._esc(row.get('watch_points'))}</div>
                   <div><strong>{self._esc(self.presentation['html']['labels']['modal_risk_flags'])}</strong><br>{self._esc(row.get('risk_flags'))}</div>
@@ -1427,6 +1438,21 @@ class DailyReportGenerator:
             </div>
             """
             for row in observation_pool
+        )
+
+    def _related_board_text(self, row: Dict[str, Any]) -> str:
+        related = row.get("related_board_names") or []
+        if not related:
+            return ""
+        return " / ".join(str(item) for item in related[:5] if item)
+
+    def _render_related_board_block(self, row: Dict[str, Any]) -> str:
+        related_board_text = self._related_board_text(row)
+        if not related_board_text:
+            return ""
+        return (
+            f"<div><strong>相关交易标签</strong><br>"
+            f"{self._esc(related_board_text)}</div>"
         )
 
     def _fmt_number(self, value: Any, suffix: str = "") -> str:
