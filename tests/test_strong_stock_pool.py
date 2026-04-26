@@ -250,6 +250,23 @@ class StrongStockReportTests(StrongStockDbMixin, unittest.TestCase):
             self.assertEqual(report_data["strong_board_summary"][0]["board_name"], "共封装光学(CPO)")
             self.assertEqual(report_data["strong_board_summary"][1]["board_name"], "PCB概念")
 
+    def test_html_report_uses_terminal_layout(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            db = self._db(tmpdir)
+            self._insert_feature(db, "sz.000001", "东山精密", 90.0, 2_100_000_000, True, False)
+            self._insert_board_feature(db, "AI手机", "concept", 70.0, 4.0)
+            self._insert_membership(db, "sz.000001", "AI手机", "concept")
+            ObservationPoolSelector(db).build("2026-04-24")
+
+            result = DailyReportGenerator(db).generate("2026-04-24")
+            html = Path(result["html_path"]).read_text(encoding="utf-8")
+
+            self.assertIn("terminal-shell", html)
+            self.assertIn("强势池 Monitor", html)
+            self.assertIn("CORE TARGETS", html)
+            self.assertIn("AI手机", html)
+            self.assertNotIn("gauge-dial", html)
+
 
 if __name__ == "__main__":
     unittest.main()

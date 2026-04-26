@@ -436,7 +436,6 @@ class DailyReportGenerator:
         board_distribution = report_data["board_distribution"]
         strong_board_summary = report_data["strong_board_summary"]
         index_chips_html = self._build_index_chips(market_summary)
-        hero_gauges_html = self._build_hero_gauges(market_summary)
         hero_core_targets_html = self._build_hero_core_targets(observation_pool)
         observation_modals_html = self._build_observation_modals(observation_pool)
 
@@ -460,6 +459,21 @@ class DailyReportGenerator:
             """
             for item in summary_cards
             for label, value, extra_class in [item if len(item) == 3 else (item[0], item[1], "")]
+        )
+        hero_cards = [
+            ("上证", self._fmt_number(market_summary.get("sh_index_pct"), suffix="%"), self._pct_class(market_summary.get("sh_index_pct"))),
+            ("成交", self._fmt_amount(market_summary.get("total_amount")), ""),
+            ("涨停", self._fmt_number(market_summary.get("limit_up_count")), ""),
+            ("强票", self._fmt_number(len(observation_pool)), ""),
+        ]
+        hero_cards_html = "\n".join(
+            f"""
+            <article class="metric-card metric-card-compact">
+              <div class="metric-label">{label}</div>
+              <div class="metric-value {extra_class}">{value}</div>
+            </article>
+            """
+            for label, value, extra_class in hero_cards
         )
 
         boards_html = "\n".join(
@@ -517,20 +531,21 @@ class DailyReportGenerator:
   <title>{self._esc(self.presentation['html']['page_title'])} {self._esc(metadata['trade_date'])}</title>
   <style>
     :root {{
-      --bg: #f3ede3;
-      --panel: rgba(255, 250, 243, 0.82);
-      --panel-strong: rgba(255, 252, 246, 0.92);
-      --ink: #211812;
-      --muted: #6a5b4f;
-      --line: rgba(84, 60, 40, 0.12);
-      --line-strong: rgba(255, 236, 214, 0.16);
-      --accent: #c76819;
-      --accent-deep: #7a3b14;
-      --accent-soft: rgba(199, 104, 25, 0.12);
-      --accent-glow: rgba(232, 147, 83, 0.26);
-      --rise: #ba3a30;
-      --fall: #1a8f55;
-      --shadow: 0 24px 60px rgba(77, 48, 21, 0.14);
+      --bg: #0f1511;
+      --bg-soft: #182018;
+      --panel: rgba(255, 255, 255, 0.055);
+      --panel-strong: rgba(255, 255, 255, 0.078);
+      --ink: #edf3e9;
+      --muted: #98a495;
+      --line: rgba(237, 243, 233, 0.11);
+      --line-strong: rgba(237, 243, 233, 0.16);
+      --accent: #d7b45c;
+      --accent-deep: #f1d47d;
+      --accent-soft: rgba(215, 180, 92, 0.16);
+      --accent-glow: rgba(215, 180, 92, 0.2);
+      --rise: #f06f61;
+      --fall: #40c48a;
+      --shadow: 0 28px 76px rgba(0, 0, 0, 0.34);
       --radius: 24px;
     }}
     * {{ box-sizing: border-box; }}
@@ -539,10 +554,9 @@ class DailyReportGenerator:
       font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at 0% 0%, rgba(227, 155, 84, 0.22), transparent 30%),
-        radial-gradient(circle at 100% 10%, rgba(32, 90, 87, 0.14), transparent 24%),
-        radial-gradient(circle at 50% 100%, rgba(146, 88, 29, 0.08), transparent 34%),
-        linear-gradient(180deg, #f8f2e9 0%, var(--bg) 100%);
+        radial-gradient(circle at 90% 0%, rgba(215, 180, 92, 0.16), transparent 24%),
+        radial-gradient(circle at 8% 18%, rgba(64, 196, 138, 0.1), transparent 22%),
+        linear-gradient(135deg, #0e130f 0%, var(--bg) 46%, #20281e 100%);
       min-height: 100vh;
     }}
     body::before {{
@@ -551,27 +565,30 @@ class DailyReportGenerator:
       inset: 0;
       pointer-events: none;
       background-image:
-        linear-gradient(rgba(122, 59, 20, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(122, 59, 20, 0.03) 1px, transparent 1px);
-      background-size: 26px 26px;
-      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.3), transparent 88%);
+        linear-gradient(rgba(237, 243, 233, 0.032) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(237, 243, 233, 0.032) 1px, transparent 1px);
+      background-size: 30px 30px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.36), transparent 86%);
     }}
     .wrap {{
       width: min(1380px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 30px 0 64px;
     }}
+    .terminal-shell {{
+      position: relative;
+    }}
     .hero {{
       background:
-        radial-gradient(circle at top right, rgba(250, 194, 141, 0.2), transparent 30%),
-        linear-gradient(135deg, #221611 0%, #4f2d1c 52%, #8b4d1f 100%);
+        radial-gradient(circle at top right, var(--accent-glow), transparent 28%),
+        linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.026));
       border: 1px solid var(--line-strong);
       border-radius: 32px;
-      box-shadow: 0 26px 70px rgba(53, 31, 17, 0.28);
+      box-shadow: var(--shadow);
       padding: 30px 32px 28px;
       position: relative;
       overflow: hidden;
-      color: #fff7ef;
+      color: var(--ink);
     }}
     .hero::after {{
       content: "";
@@ -580,7 +597,7 @@ class DailyReportGenerator:
       width: 260px;
       height: 260px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(255, 205, 153, 0.34), transparent 68%);
+      background: radial-gradient(circle, rgba(215, 180, 92, 0.18), transparent 68%);
     }}
     .hero::before {{
       content: "";
@@ -588,14 +605,14 @@ class DailyReportGenerator:
       inset: -40% auto auto -10%;
       width: 360px;
       height: 360px;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 68%);
+      background: radial-gradient(circle, rgba(64, 196, 138, 0.08), transparent 68%);
       transform: rotate(18deg);
     }}
     .hero-grid {{
       position: relative;
       z-index: 1;
       display: grid;
-      grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.95fr);
+      grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
       gap: 22px;
       align-items: stretch;
     }}
@@ -603,27 +620,27 @@ class DailyReportGenerator:
       font-size: 12px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: rgba(255, 235, 218, 0.72);
+      color: var(--muted);
       margin-bottom: 10px;
     }}
     h1 {{
       margin: 0;
-      font-size: clamp(34px, 4.7vw, 56px);
+      font-size: clamp(34px, 4.8vw, 58px);
       line-height: 1;
-      font-family: "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
-      font-weight: 700;
+      font-weight: 900;
+      letter-spacing: -0.07em;
       max-width: none;
       white-space: nowrap;
     }}
     .hero-sub {{
       margin-top: 16px;
-      color: rgba(255, 240, 228, 0.82);
+      color: var(--muted);
       font-size: 15px;
       max-width: 72ch;
       line-height: 1.75;
     }}
     .hero-sub strong {{
-      color: #fffaf5;
+      color: var(--ink);
     }}
     .hero-pill-row {{
       display: flex;
@@ -637,28 +654,28 @@ class DailyReportGenerator:
       gap: 8px;
       padding: 9px 14px;
       border-radius: 999px;
-      background: rgba(255, 248, 239, 0.08);
-      border: 1px solid rgba(255, 239, 224, 0.12);
-      color: rgba(255, 242, 232, 0.92);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--ink);
       font-size: 13px;
       backdrop-filter: blur(10px);
     }}
     .hero-pill strong {{
-      color: #fffaf5;
+      color: var(--ink);
       font-weight: 700;
     }}
     .hero-rail {{
       padding: 20px;
       border-radius: 24px;
-      background: linear-gradient(180deg, rgba(255, 248, 239, 0.1), rgba(255, 248, 239, 0.06));
-      border: 1px solid rgba(255, 238, 218, 0.12);
+      background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+      border: 1px solid var(--line);
       backdrop-filter: blur(12px);
     }}
     .hero-rail-title {{
       font-size: 12px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: #ffd8b4;
+      color: var(--accent-deep);
       margin-bottom: 14px;
       font-weight: 700;
     }}
@@ -668,98 +685,13 @@ class DailyReportGenerator:
       font-size: 12px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: #ffd8b4;
+      color: var(--accent-deep);
       font-weight: 700;
     }}
-    .hero-gauge-grid {{
+    .hero-metric-grid {{
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .hero-gauge-card {{
-      display: grid;
-      gap: 8px;
-      justify-items: center;
-      padding: 10px 8px 4px;
-      border-radius: 18px;
-      background: rgba(255, 250, 244, 0.08);
-      border: 1px solid rgba(255, 238, 218, 0.1);
-    }}
-    .gauge-dial {{
-      position: relative;
-      width: 126px;
-      height: 74px;
-      border-radius: 126px 126px 0 0;
-      background: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04));
-      overflow: hidden;
-      border: 1px solid rgba(255, 238, 218, 0.12);
-    }}
-    .gauge-dial::before {{
-      content: "";
-      position: absolute;
-      inset: 10px 10px 0;
-      border-radius: 120px 120px 0 0;
-      background:
-        linear-gradient(90deg, rgba(31,143,85,0.95) 0 32%, rgba(240,181,59,0.9) 32% 68%, rgba(186,58,48,0.95) 68% 100%);
-      opacity: 0.92;
-    }}
-    .gauge-dial::after {{
-      content: "";
-      position: absolute;
-      left: 50%;
-      bottom: 0;
-      width: 88px;
-      height: 44px;
-      transform: translateX(-50%);
-      background: #3b2419;
-      border-radius: 88px 88px 0 0;
-      border-top: 1px solid rgba(255,255,255,0.06);
-    }}
-    .gauge-needle {{
-      position: absolute;
-      left: 50%;
-      bottom: 2px;
-      width: 4px;
-      height: 52px;
-      background: #fff4e8;
-      border-radius: 999px;
-      transform-origin: bottom center;
-      transform: translateX(-50%) rotate(calc(-90deg + (var(--gauge) * 1.8deg)));
-      box-shadow: 0 0 0 1px rgba(89, 44, 17, 0.2);
-      z-index: 2;
-    }}
-    .gauge-needle::after {{
-      content: "";
-      position: absolute;
-      left: 50%;
-      bottom: -4px;
-      width: 14px;
-      height: 14px;
-      transform: translateX(-50%);
-      border-radius: 50%;
-      background: #fff4e8;
-    }}
-    .gauge-core {{
-      display: grid;
-      gap: 4px;
-      justify-items: center;
-      margin-top: 6px;
-    }}
-    .gauge-core strong {{
-      display: block;
-      color: #fffaf5;
-      font-size: 20px;
-      line-height: 1;
-    }}
-    .gauge-core span {{
-      color: rgba(255, 235, 218, 0.72);
-      font-size: 11px;
-    }}
-    .gauge-meta {{
-      color: rgba(255, 241, 229, 0.78);
-      font-size: 12px;
-      text-align: center;
-      line-height: 1.45;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
     }}
     .hero-core-list {{
       list-style: none;
@@ -777,31 +709,42 @@ class DailyReportGenerator:
       text-align: left;
       font: inherit;
       text-decoration: none;
-      color: #fffaf5;
-      padding: 10px 12px;
+      color: var(--ink);
+      padding: 12px 14px;
       border-radius: 16px;
-      background: rgba(255, 250, 244, 0.08);
-      border: 1px solid rgba(255, 238, 218, 0.1);
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
       font-size: 14px;
     }}
     .hero-core-item strong {{
-      color: #ffe2c8;
+      color: var(--accent-deep);
     }}
     .hero-core-item:nth-child(1) button {{
-      background: linear-gradient(90deg, rgba(201,104,34,0.22), rgba(255,250,244,0.08));
-      border-color: rgba(255, 208, 170, 0.18);
+      background: linear-gradient(90deg, rgba(215,180,92,0.18), rgba(255,255,255,0.055));
+      border-color: rgba(215, 180, 92, 0.2);
     }}
     .hero-core-item:nth-child(2) button {{
-      background: linear-gradient(90deg, rgba(185,74,50,0.18), rgba(255,250,244,0.08));
-      border-color: rgba(255, 190, 168, 0.16);
+      background: linear-gradient(90deg, rgba(240,111,97,0.12), rgba(255,255,255,0.055));
+      border-color: rgba(240, 111, 97, 0.16);
     }}
     .hero-core-item:nth-child(3) button {{
-      background: linear-gradient(90deg, rgba(32,122,104,0.18), rgba(255,250,244,0.08));
-      border-color: rgba(169, 225, 214, 0.14);
+      background: linear-gradient(90deg, rgba(64,196,138,0.12), rgba(255,255,255,0.055));
+      border-color: rgba(64, 196, 138, 0.16);
     }}
-    .hero-core-item:nth-child(1) strong {{ color: #ffd58f; }}
+    .hero-core-item:nth-child(1) strong {{ color: #f1d47d; }}
     .hero-core-item:nth-child(2) strong {{ color: #ffc0ad; }}
     .hero-core-item:nth-child(3) strong {{ color: #b9f1e1; }}
+    .hero-core-name {{
+      display: block;
+      font-weight: 800;
+      font-size: 16px;
+      margin-bottom: 4px;
+    }}
+    .hero-core-tags {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }}
     .section {{
       margin-top: 22px;
       background: var(--panel);
@@ -821,7 +764,6 @@ class DailyReportGenerator:
     .section-title h2 {{
       margin: 0;
       font-size: 24px;
-      font-family: "Iowan Old Style", "Palatino Linotype", serif;
       color: var(--accent-deep);
     }}
     .section-title span {{
@@ -834,12 +776,16 @@ class DailyReportGenerator:
       gap: 14px;
     }}
     .metric-card {{
-      background: linear-gradient(180deg, rgba(255, 253, 249, 0.9), rgba(255, 248, 239, 0.82));
+      background: var(--panel-strong);
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 16px;
       min-height: 96px;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }}
+    .metric-card-compact {{
+      min-height: 88px;
+      padding: 14px;
     }}
     .metric-label {{
       color: var(--muted);
@@ -918,7 +864,7 @@ class DailyReportGenerator:
     table {{
       width: 100%;
       border-collapse: collapse;
-      background: rgba(255, 255, 255, 0.55);
+      background: rgba(255, 255, 255, 0.035);
     }}
     th, td {{
       padding: 12px 14px;
@@ -932,13 +878,13 @@ class DailyReportGenerator:
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      background: rgba(255, 248, 240, 0.8);
+      background: rgba(255, 255, 255, 0.055);
     }}
     tbody tr {{
       transition: background 160ms ease, transform 160ms ease;
     }}
     tbody tr:hover {{
-      background: rgba(255, 248, 240, 0.72);
+      background: rgba(255, 255, 255, 0.06);
     }}
     tr:last-child td {{ border-bottom: none; }}
     .chip {{
@@ -949,23 +895,24 @@ class DailyReportGenerator:
       padding: 4px 10px;
       font-size: 12px;
       font-weight: 600;
-      background: rgba(123, 92, 65, 0.08);
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--ink);
     }}
     .chip-board {{
-      background: rgba(33, 113, 160, 0.1);
-      color: #1f5c83;
+      background: var(--accent-soft);
+      color: var(--accent-deep);
     }}
     .chip-role {{
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }}
-    .chip-dragon {{ background: rgba(179, 54, 45, 0.12); color: #9c2119; }}
-    .chip-center {{ background: rgba(17, 94, 89, 0.12); color: #0e5e59; }}
-    .chip-follow {{ background: rgba(160, 115, 31, 0.14); color: #8a5e12; }}
-    .chip-trend_strong {{ background: rgba(179, 54, 45, 0.12); color: #9c2119; }}
-    .chip-emotion_strong {{ background: rgba(160, 83, 31, 0.14); color: #8a3f12; }}
-    .chip-capacity_strong {{ background: rgba(17, 94, 89, 0.12); color: #0e5e59; }}
-    .chip-watchlist {{ background: rgba(88, 81, 74, 0.12); color: #5d5750; }}
+    .chip-dragon {{ background: rgba(240, 111, 97, 0.16); color: #ffc0ad; }}
+    .chip-center {{ background: rgba(64, 196, 138, 0.14); color: #b9f1e1; }}
+    .chip-follow {{ background: var(--accent-soft); color: var(--accent-deep); }}
+    .chip-trend_strong {{ background: rgba(240, 111, 97, 0.16); color: #ffc0ad; }}
+    .chip-emotion_strong {{ background: var(--accent-soft); color: var(--accent-deep); }}
+    .chip-capacity_strong {{ background: rgba(64, 196, 138, 0.14); color: #b9f1e1; }}
+    .chip-watchlist {{ background: rgba(255, 255, 255, 0.08); color: var(--muted); }}
     .pool-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
@@ -974,7 +921,7 @@ class DailyReportGenerator:
     .pool-card {{
       position: relative;
       overflow: hidden;
-      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,249,241,0.92));
+      background: var(--panel-strong);
       border: 1px solid var(--line);
       border-radius: 18px;
       box-shadow: 0 10px 26px rgba(73, 54, 35, 0.08);
@@ -985,7 +932,7 @@ class DailyReportGenerator:
       position: absolute;
       inset: 0 auto 0 0;
       width: 4px;
-      background: linear-gradient(180deg, var(--accent), rgba(199, 104, 25, 0.18));
+      background: linear-gradient(180deg, var(--accent), rgba(215, 180, 92, 0.18));
     }}
     .pool-summary {{
       width: 100%;
@@ -1024,11 +971,11 @@ class DailyReportGenerator:
     .score-badge {{
       min-width: 64px;
       text-align: center;
-      background: linear-gradient(180deg, rgba(199, 104, 25, 0.16), rgba(199, 104, 25, 0.08));
+      background: var(--accent-soft);
       color: var(--accent);
       border-radius: 16px;
       padding: 8px 10px;
-      border: 1px solid rgba(199, 104, 25, 0.12);
+      border: 1px solid rgba(215, 180, 92, 0.16);
     }}
     .score-badge strong {{
       display: block;
@@ -1055,7 +1002,7 @@ class DailyReportGenerator:
       border: 1px solid var(--line);
       border-radius: 16px;
       padding: 12px 14px;
-      background: rgba(255,255,255,0.55);
+      background: var(--panel-strong);
       font-size: 14px;
     }}
     .backup-code, .backup-score {{
@@ -1071,7 +1018,7 @@ class DailyReportGenerator:
     .modal-overlay {{
       position: fixed;
       inset: 0;
-      background: rgba(20, 13, 10, 0.56);
+      background: rgba(5, 8, 6, 0.7);
       backdrop-filter: blur(6px);
       display: none;
       align-items: center;
@@ -1086,10 +1033,10 @@ class DailyReportGenerator:
       width: min(760px, calc(100vw - 28px));
       max-height: min(86vh, 900px);
       overflow: auto;
-      background: linear-gradient(180deg, rgba(255,253,249,0.98), rgba(252,244,232,0.96));
+      background: linear-gradient(180deg, #172018, #101611);
       border: 1px solid var(--line);
       border-radius: 24px;
-      box-shadow: 0 30px 80px rgba(45, 28, 16, 0.28);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.46);
       padding: 22px;
     }}
     .modal-head {{
@@ -1106,7 +1053,7 @@ class DailyReportGenerator:
     .modal-close {{
       border: 0;
       border-radius: 999px;
-      background: rgba(80, 58, 44, 0.08);
+      background: rgba(255, 255, 255, 0.08);
       color: var(--ink);
       width: 36px;
       height: 36px;
@@ -1138,7 +1085,7 @@ class DailyReportGenerator:
     .modal-metric {{
       padding: 12px 14px;
       border-radius: 16px;
-      background: rgba(255,255,255,0.64);
+      background: var(--panel-strong);
       border: 1px solid var(--line);
     }}
     .modal-metric span {{
@@ -1158,27 +1105,28 @@ class DailyReportGenerator:
       .wrap {{ width: min(100vw - 18px, 1380px); padding-top: 18px; }}
       .hero, .section {{ padding: 18px; border-radius: 22px; }}
       .hero-grid {{ grid-template-columns: 1fr; }}
+      .hero-metric-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .backup-list li {{ grid-template-columns: 1fr; }}
       .modal-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
 <body>
-  <main class="wrap">
+  <main class="wrap terminal-shell">
     <section class="hero">
       <div class="hero-grid">
         <div>
-          <div class="eyebrow">{self._esc(self.presentation['html']['hero']['eyebrow'])}</div>
-          <h1>市场观察日报</h1>
+          <div class="eyebrow">MARKET DAILY REPORT · {self._esc(metadata['trade_date'])}</div>
+          <h1>强势池 Monitor</h1>
           <div class="hero-sub">
             {self._esc(self.presentation['html']['hero']['body_template'].format(trade_date=metadata['trade_date']))}
           </div>
           <div class="hero-pill-row">{index_chips_html}</div>
         </div>
         <aside class="hero-rail">
-          <div class="hero-rail-title">{self._esc(self.presentation['html']['hero']['focus_title'])}</div>
-          <div class="hero-gauge-grid">{hero_gauges_html}</div>
-          <div class="hero-rail-subtitle">{self._esc(self.presentation['html']['hero']['core_targets_title'])}</div>
+          <div class="hero-rail-title">MARKET SNAPSHOT</div>
+          <div class="hero-metric-grid">{hero_cards_html}</div>
+          <div class="hero-rail-subtitle">CORE TARGETS</div>
           <ul class="hero-core-list">{hero_core_targets_html}</ul>
         </aside>
       </div>
@@ -1352,20 +1300,29 @@ class DailyReportGenerator:
         )
 
     def _build_hero_core_targets(self, observation_pool: List[Dict[str, Any]]) -> str:
-        candidates = observation_pool[:3]
+        candidates = observation_pool[:5]
         if not candidates:
             return "<li class=\"hero-core-item\">暂无核心标的</li>"
         return "\n".join(
             f"""
             <li class="hero-core-item">
               <button type="button" data-modal-open="modal-{self._esc(row['symbol'])}">
-                <span>{index}. {self._esc(row['name'])}</span>
+                <span>
+                  <span class="hero-core-name">{index:02d}. {self._esc(row['name'])}</span>
+                  <span class="hero-core-tags">{self._esc(row.get('board_name'))}{self._hero_related_suffix(row)}</span>
+                </span>
                 <strong>{self._role_label(row.get('role_tag'))}</strong>
               </button>
             </li>
             """
             for index, row in enumerate(candidates, start=1)
         )
+
+    def _hero_related_suffix(self, row: Dict[str, Any]) -> str:
+        related = self._related_board_text(row)
+        if not related:
+            return ""
+        return f" / {self._esc(related)}"
 
     def _render_observation_card(self, index: int, row: Dict[str, Any]) -> str:
         role_tag = row.get("role_tag") or "watchlist"
