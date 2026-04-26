@@ -531,21 +531,21 @@ class DailyReportGenerator:
   <title>{self._esc(self.presentation['html']['page_title'])} {self._esc(metadata['trade_date'])}</title>
   <style>
     :root {{
-      --bg: #0f1511;
-      --bg-soft: #182018;
-      --panel: rgba(255, 255, 255, 0.055);
-      --panel-strong: rgba(255, 255, 255, 0.078);
-      --ink: #edf3e9;
-      --muted: #98a495;
-      --line: rgba(237, 243, 233, 0.11);
-      --line-strong: rgba(237, 243, 233, 0.16);
-      --accent: #d7b45c;
-      --accent-deep: #f1d47d;
-      --accent-soft: rgba(215, 180, 92, 0.16);
-      --accent-glow: rgba(215, 180, 92, 0.2);
-      --rise: #f06f61;
-      --fall: #40c48a;
-      --shadow: 0 28px 76px rgba(0, 0, 0, 0.34);
+      --bg: #f7f2e8;
+      --bg-soft: #e9dfce;
+      --panel: rgba(255, 255, 255, 0.62);
+      --panel-strong: rgba(255, 255, 255, 0.78);
+      --ink: #18211b;
+      --muted: #667064;
+      --line: rgba(24, 33, 27, 0.12);
+      --line-strong: rgba(24, 33, 27, 0.16);
+      --accent: #b56a2d;
+      --accent-deep: #8a421b;
+      --accent-soft: rgba(181, 106, 45, 0.13);
+      --accent-glow: rgba(181, 106, 45, 0.14);
+      --rise: #ba3a30;
+      --fall: #13835f;
+      --shadow: 0 24px 58px rgba(33, 27, 18, 0.14);
       --radius: 24px;
     }}
     * {{ box-sizing: border-box; }}
@@ -554,9 +554,9 @@ class DailyReportGenerator:
       font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at 90% 0%, rgba(215, 180, 92, 0.16), transparent 24%),
-        radial-gradient(circle at 8% 18%, rgba(64, 196, 138, 0.1), transparent 22%),
-        linear-gradient(135deg, #0e130f 0%, var(--bg) 46%, #20281e 100%);
+        radial-gradient(circle at 90% 0%, rgba(181, 106, 45, 0.16), transparent 24%),
+        radial-gradient(circle at 8% 18%, rgba(19, 131, 95, 0.08), transparent 22%),
+        linear-gradient(135deg, #fbf8f1 0%, var(--bg) 48%, var(--bg-soft) 100%);
       min-height: 100vh;
     }}
     body::before {{
@@ -565,10 +565,10 @@ class DailyReportGenerator:
       inset: 0;
       pointer-events: none;
       background-image:
-        linear-gradient(rgba(237, 243, 233, 0.032) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(237, 243, 233, 0.032) 1px, transparent 1px);
+        linear-gradient(rgba(24, 33, 27, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(24, 33, 27, 0.035) 1px, transparent 1px);
       background-size: 30px 30px;
-      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.36), transparent 86%);
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 86%);
     }}
     .wrap {{
       width: min(1380px, calc(100vw - 32px));
@@ -581,7 +581,7 @@ class DailyReportGenerator:
     .hero {{
       background:
         radial-gradient(circle at top right, var(--accent-glow), transparent 28%),
-        linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.026));
+        linear-gradient(145deg, rgba(255,255,255,0.82), rgba(255,247,232,0.58));
       border: 1px solid var(--line-strong);
       border-radius: 32px;
       box-shadow: var(--shadow);
@@ -597,7 +597,7 @@ class DailyReportGenerator:
       width: 260px;
       height: 260px;
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(215, 180, 92, 0.18), transparent 68%);
+      background: radial-gradient(circle, rgba(181, 106, 45, 0.16), transparent 68%);
     }}
     .hero::before {{
       content: "";
@@ -605,7 +605,7 @@ class DailyReportGenerator:
       inset: -40% auto auto -10%;
       width: 360px;
       height: 360px;
-      background: radial-gradient(circle, rgba(64, 196, 138, 0.08), transparent 68%);
+      background: radial-gradient(circle, rgba(19, 131, 95, 0.08), transparent 68%);
       transform: rotate(18deg);
     }}
     .hero-grid {{
@@ -720,20 +720,20 @@ class DailyReportGenerator:
       color: var(--accent-deep);
     }}
     .hero-core-item:nth-child(1) button {{
-      background: linear-gradient(90deg, rgba(215,180,92,0.18), rgba(255,255,255,0.055));
-      border-color: rgba(215, 180, 92, 0.2);
+      background: linear-gradient(90deg, rgba(181,106,45,0.15), rgba(255,255,255,0.72));
+      border-color: rgba(181, 106, 45, 0.18);
     }}
     .hero-core-item:nth-child(2) button {{
-      background: linear-gradient(90deg, rgba(240,111,97,0.12), rgba(255,255,255,0.055));
-      border-color: rgba(240, 111, 97, 0.16);
+      background: linear-gradient(90deg, rgba(186,58,48,0.1), rgba(255,255,255,0.72));
+      border-color: rgba(186, 58, 48, 0.14);
     }}
     .hero-core-item:nth-child(3) button {{
-      background: linear-gradient(90deg, rgba(64,196,138,0.12), rgba(255,255,255,0.055));
-      border-color: rgba(64, 196, 138, 0.16);
+      background: linear-gradient(90deg, rgba(19,131,95,0.1), rgba(255,255,255,0.72));
+      border-color: rgba(19, 131, 95, 0.14);
     }}
-    .hero-core-item:nth-child(1) strong {{ color: #f1d47d; }}
-    .hero-core-item:nth-child(2) strong {{ color: #ffc0ad; }}
-    .hero-core-item:nth-child(3) strong {{ color: #b9f1e1; }}
+    .hero-core-item:nth-child(1) strong {{ color: var(--accent-deep); }}
+    .hero-core-item:nth-child(2) strong {{ color: #9c3028; }}
+    .hero-core-item:nth-child(3) strong {{ color: #116b51; }}
     .hero-core-name {{
       display: block;
       font-weight: 800;
@@ -781,7 +781,7 @@ class DailyReportGenerator:
       border-radius: 18px;
       padding: 16px;
       min-height: 96px;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
     }}
     .metric-card-compact {{
       min-height: 88px;
@@ -864,7 +864,7 @@ class DailyReportGenerator:
     table {{
       width: 100%;
       border-collapse: collapse;
-      background: rgba(255, 255, 255, 0.035);
+      background: rgba(255, 255, 255, 0.48);
     }}
     th, td {{
       padding: 12px 14px;
@@ -878,13 +878,13 @@ class DailyReportGenerator:
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      background: rgba(255, 255, 255, 0.055);
+      background: rgba(255, 255, 255, 0.56);
     }}
     tbody tr {{
       transition: background 160ms ease, transform 160ms ease;
     }}
     tbody tr:hover {{
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.5);
     }}
     tr:last-child td {{ border-bottom: none; }}
     .chip {{
@@ -895,7 +895,7 @@ class DailyReportGenerator:
       padding: 4px 10px;
       font-size: 12px;
       font-weight: 600;
-      background: rgba(255, 255, 255, 0.07);
+      background: rgba(24, 33, 27, 0.07);
       color: var(--ink);
     }}
     .chip-board {{
@@ -906,13 +906,13 @@ class DailyReportGenerator:
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }}
-    .chip-dragon {{ background: rgba(240, 111, 97, 0.16); color: #ffc0ad; }}
-    .chip-center {{ background: rgba(64, 196, 138, 0.14); color: #b9f1e1; }}
+    .chip-dragon {{ background: rgba(186, 58, 48, 0.12); color: #9c3028; }}
+    .chip-center {{ background: rgba(19, 131, 95, 0.12); color: #116b51; }}
     .chip-follow {{ background: var(--accent-soft); color: var(--accent-deep); }}
-    .chip-trend_strong {{ background: rgba(240, 111, 97, 0.16); color: #ffc0ad; }}
+    .chip-trend_strong {{ background: rgba(186, 58, 48, 0.12); color: #9c3028; }}
     .chip-emotion_strong {{ background: var(--accent-soft); color: var(--accent-deep); }}
-    .chip-capacity_strong {{ background: rgba(64, 196, 138, 0.14); color: #b9f1e1; }}
-    .chip-watchlist {{ background: rgba(255, 255, 255, 0.08); color: var(--muted); }}
+    .chip-capacity_strong {{ background: rgba(19, 131, 95, 0.12); color: #116b51; }}
+    .chip-watchlist {{ background: rgba(24, 33, 27, 0.08); color: var(--muted); }}
     .pool-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
@@ -924,7 +924,7 @@ class DailyReportGenerator:
       background: var(--panel-strong);
       border: 1px solid var(--line);
       border-radius: 18px;
-      box-shadow: 0 10px 26px rgba(73, 54, 35, 0.08);
+      box-shadow: 0 10px 26px rgba(33, 27, 18, 0.08);
       padding: 0;
     }}
     .pool-card::before {{
@@ -932,7 +932,7 @@ class DailyReportGenerator:
       position: absolute;
       inset: 0 auto 0 0;
       width: 4px;
-      background: linear-gradient(180deg, var(--accent), rgba(215, 180, 92, 0.18));
+      background: linear-gradient(180deg, var(--accent), rgba(181, 106, 45, 0.18));
     }}
     .pool-summary {{
       width: 100%;
@@ -977,7 +977,7 @@ class DailyReportGenerator:
       color: var(--accent);
       border-radius: 16px;
       padding: 8px 10px;
-      border: 1px solid rgba(215, 180, 92, 0.16);
+      border: 1px solid rgba(181, 106, 45, 0.16);
     }}
     .score-badge strong {{
       display: block;
@@ -1020,7 +1020,7 @@ class DailyReportGenerator:
     .modal-overlay {{
       position: fixed;
       inset: 0;
-      background: rgba(5, 8, 6, 0.7);
+      background: rgba(24, 33, 27, 0.36);
       backdrop-filter: blur(6px);
       display: none;
       align-items: center;
@@ -1035,10 +1035,10 @@ class DailyReportGenerator:
       width: min(760px, calc(100vw - 28px));
       max-height: min(86vh, 900px);
       overflow: auto;
-      background: linear-gradient(180deg, #172018, #101611);
+      background: linear-gradient(180deg, #fffaf1, #f2e7d5);
       border: 1px solid var(--line);
       border-radius: 24px;
-      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.46);
+      box-shadow: 0 30px 80px rgba(33, 27, 18, 0.3);
       padding: 22px;
     }}
     .modal-head {{
@@ -1055,7 +1055,7 @@ class DailyReportGenerator:
     .modal-close {{
       border: 0;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(24, 33, 27, 0.08);
       color: var(--ink);
       width: 36px;
       height: 36px;

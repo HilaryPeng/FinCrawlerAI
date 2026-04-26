@@ -262,6 +262,8 @@ class StrongStockReportTests(StrongStockDbMixin, unittest.TestCase):
             html = Path(result["html_path"]).read_text(encoding="utf-8")
 
             self.assertIn("terminal-shell", html)
+            self.assertIn("--bg: #f7f2e8;", html)
+            self.assertIn("--ink: #18211b;", html)
             self.assertIn("强势池 Monitor", html)
             self.assertIn("CORE TARGETS", html)
             self.assertIn("AI手机", html)

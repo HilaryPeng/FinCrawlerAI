@@ -2,13 +2,13 @@
 
 ## Decision
 
-Use the A visual direction for the market daily HTML report: a trading-terminal style screen optimized for fast post-market scanning.
+Use the A3 visual direction for the market daily HTML report: a rice-paper and copper screen optimized for fast post-market scanning.
 
 ## Visual Direction
 
-- Primary style: dark terminal layout, not a marketing poster.
-- Primary palette:墨绿金, using a deep green-black background, muted green panels, and restrained gold highlights.
-- Avoid the previous brown/orange poster feeling.
+- Primary style: light trading desk layout, not a marketing poster.
+- Primary palette:米纸铜, using a warm paper background, translucent white cards, copper highlights, and dark ink text.
+- Avoid heavy black/dark cards and keep stock names readable on cards.
 - Preserve high information density while improving hierarchy and mobile readability.
 
 ## Layout Changes
