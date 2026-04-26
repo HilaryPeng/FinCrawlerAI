@@ -265,6 +265,7 @@ class StrongStockReportTests(StrongStockDbMixin, unittest.TestCase):
             self.assertIn("强势池 Monitor", html)
             self.assertIn("CORE TARGETS", html)
             self.assertIn("AI手机", html)
+            self.assertIn("background: transparent;\n      color: var(--ink);\n      text-align: left;", html)
             self.assertNotIn("gauge-dial", html)
 
 

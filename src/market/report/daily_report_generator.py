@@ -939,6 +939,7 @@ class DailyReportGenerator:
       cursor: pointer;
       border: 0;
       background: transparent;
+      color: var(--ink);
       text-align: left;
       font: inherit;
       padding: 14px 16px 12px 18px;
@@ -962,6 +963,7 @@ class DailyReportGenerator:
       margin: 0;
       font-size: 20px;
       line-height: 1.08;
+      color: var(--ink);
     }}
     .pool-symbol {{
       color: var(--muted);
