@@ -5,6 +5,7 @@ Daily market report generator.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -16,6 +17,20 @@ from src.specs import load_market_daily_spec
 
 class DailyReportGenerator:
     """Generate JSON and Markdown daily reports."""
+
+    CSRC_DISPLAY_NAMES = {
+        "C39计算机、通信和其他电子设备制造业": "电子设备制造",
+        "C38电气机械和器材制造业": "电气机械",
+        "C32有色金属冶炼和压延加工业": "有色金属",
+        "K70房地产业": "房地产",
+    }
+    RISK_LABELS = {
+        "weak_close": "弱收盘",
+        "high_turnover": "高换手",
+        "fading_board": "板块退潮",
+        "isolated_spike": "孤立冲高",
+        "broken_limit": "炸板",
+    }
 
     def __init__(self, db: DatabaseConnection):
         self.db = db
@@ -45,6 +60,10 @@ class DailyReportGenerator:
         role_summary = self._get_pool_role_summary(trade_date)
         board_distribution = self._get_pool_board_distribution(trade_date)
         strong_board_summary = self._get_strong_board_summary(trade_date)
+        observation_pool = self._decorate_observation_rows(observation_pool)
+        backup_pool = self._decorate_observation_rows(backup_pool)
+        environment = self._compute_environment(market_summary, observation_pool)
+        mainlines = self._build_mainlines(top_boards, strong_board_summary, observation_pool)
 
         return {
             "metadata": {
@@ -59,6 +78,8 @@ class DailyReportGenerator:
             "role_summary": role_summary,
             "board_distribution": board_distribution,
             "strong_board_summary": strong_board_summary,
+            "environment": environment,
+            "mainlines": mainlines,
         }
 
     def _get_market_summary(self, trade_date: str) -> Dict[str, Any]:
@@ -110,27 +131,38 @@ class DailyReportGenerator:
         rows = self.db.fetchall(
             """
             SELECT
-                symbol,
-                name,
-                role_tag,
-                board_name,
-                board_rank,
-                stock_rank,
-                final_score,
-                selected_reason,
-                watch_points,
-                risk_flags
-            FROM daily_observation_pool
-            WHERE trade_date = ?
-              AND pool_group = ?
+                p.symbol,
+                p.name,
+                p.role_tag,
+                p.board_name,
+                p.board_rank,
+                p.stock_rank,
+                p.final_score,
+                p.selected_reason,
+                p.watch_points,
+                COALESCE(p.risk_flags, f.risk_flags) AS risk_flags,
+                f.pct_chg,
+                f.amount,
+                f.turnover,
+                f.amplitude,
+                f.limit_up,
+                f.broken_limit,
+                f.limit_up_streak,
+                f.feature_json
+            FROM daily_observation_pool p
+            LEFT JOIN daily_stock_features f
+              ON p.trade_date = f.trade_date
+             AND p.symbol = f.symbol
+            WHERE p.trade_date = ?
+              AND p.pool_group = ?
             ORDER BY
-                CASE role_tag
+                CASE p.role_tag
                     WHEN 'dragon' THEN 1
                     WHEN 'center' THEN 2
                     WHEN 'follow' THEN 3
                     ELSE 4
                 END,
-                final_score DESC
+                p.final_score DESC
             """,
             (trade_date, pool_group),
         )
@@ -305,6 +337,288 @@ class DailyReportGenerator:
             ),
         )
 
+    def _decorate_observation_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        decorated = []
+        for row in rows:
+            item = dict(row)
+            item["display_board_name"] = self._display_board_name(item.get("board_name"))
+            item["risk_list"] = self._parse_list(item.get("risk_flags"))
+            item["risk_labels"] = [self.RISK_LABELS.get(flag, str(flag)) for flag in item["risk_list"]]
+            item["primary_role"] = self._primary_stock_role(item)
+            item["role_labels"] = self._stock_role_labels(item)
+            item["watch_conditions"] = self._watch_conditions(item)
+            decorated.append(item)
+        return decorated
+
+    def _display_board_name(self, board_name: Any) -> str:
+        text = str(board_name or "").strip()
+        if not text:
+            return "-"
+        if text in self.CSRC_DISPLAY_NAMES:
+            return self.CSRC_DISPLAY_NAMES[text]
+        match = re.match(r"^[A-Z]\d{2}(.+)$", text)
+        if not match:
+            return text
+        simplified = match.group(1)
+        for suffix in ("制造业", "加工业", "业"):
+            if simplified.endswith(suffix):
+                simplified = simplified[: -len(suffix)]
+                break
+        return simplified.replace("和", "").replace("、", "")
+
+    def _parse_json_dict(self, value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(str(value))
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _parse_list(self, value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value if item]
+        if not value or value == "-":
+            return []
+        try:
+            parsed = json.loads(str(value))
+        except Exception:
+            return [part.strip() for part in str(value).replace("，", ",").split(",") if part.strip()]
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if item]
+        if isinstance(parsed, dict):
+            return [str(key) for key, enabled in parsed.items() if enabled]
+        return [str(parsed)] if parsed else []
+
+    def _strong_metrics(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        feature_json = self._parse_json_dict(row.get("feature_json"))
+        metrics = feature_json.get("strong_metrics", {})
+        return metrics if isinstance(metrics, dict) else {}
+
+    def _trend_window_hit_count(self, row: Dict[str, Any]) -> int:
+        metrics = self._strong_metrics(row)
+        window_scores = metrics.get("trend_window_scores")
+        if isinstance(window_scores, dict):
+            values = window_scores.values()
+        elif isinstance(window_scores, list):
+            values = window_scores
+        else:
+            values = [metrics.get("trend_score")]
+        count = 0
+        for value in values:
+            try:
+                if float(value or 0) >= 80:
+                    count += 1
+            except Exception:
+                continue
+        return count
+
+    def _is_capacity_stock(self, row: Dict[str, Any]) -> bool:
+        metrics = self._strong_metrics(row)
+        try:
+            amount = float(row.get("amount") or 0)
+        except Exception:
+            amount = 0.0
+        try:
+            capacity_bonus = float(metrics.get("capacity_bonus") or 0)
+        except Exception:
+            capacity_bonus = 0.0
+        return amount >= 1_500_000_000 or capacity_bonus > 0
+
+    def _is_emotion_stock(self, row: Dict[str, Any]) -> bool:
+        metrics = self._strong_metrics(row)
+        return (
+            bool(metrics.get("emotion_channel_hit"))
+            or int(row.get("limit_up") or 0) == 1
+            or int(row.get("limit_up_streak") or 0) >= 2
+        )
+
+    def _is_trend_stock(self, row: Dict[str, Any]) -> bool:
+        metrics = self._strong_metrics(row)
+        return bool(metrics.get("trend_channel_hit")) and self._trend_window_hit_count(row) >= 2
+
+    def _primary_stock_role(self, row: Dict[str, Any]) -> str:
+        try:
+            final_score = float(row.get("final_score") or 0)
+            stock_rank = int(row.get("stock_rank") or 9999)
+        except Exception:
+            final_score = 0.0
+            stock_rank = 9999
+        if final_score >= 95 and stock_rank <= 10 and not row.get("risk_list"):
+            return "核心票"
+        if self._is_capacity_stock(row):
+            return "容量票"
+        if self._is_emotion_stock(row):
+            return "情绪票"
+        if self._is_trend_stock(row):
+            return "趋势票"
+        return "观察票"
+
+    def _stock_role_labels(self, row: Dict[str, Any]) -> List[str]:
+        labels = [row.get("primary_role") or self._primary_stock_role(row)]
+        if self._is_capacity_stock(row) and "容量票" not in labels:
+            labels.append("容量票")
+        if self._is_emotion_stock(row) and "情绪票" not in labels:
+            labels.append("情绪票")
+        if self._is_trend_stock(row) and "趋势票" not in labels:
+            labels.append("趋势票")
+        labels.extend(row.get("risk_labels") or [])
+        return labels
+
+    def _watch_conditions(self, row: Dict[str, Any]) -> List[str]:
+        conditions = []
+        if row.get("primary_role") == "容量票" or self._is_capacity_stock(row):
+            conditions.append("成交额继续保持 15 亿以上")
+        if row.get("primary_role") in {"核心票", "情绪票"} or self._is_emotion_stock(row):
+            conditions.append("涨停或高位强承接不能明显转弱")
+        if row.get("primary_role") in {"核心票", "趋势票"} or self._is_trend_stock(row):
+            conditions.append("5/10/20 日趋势结构至少两个周期不弱")
+        if row.get("display_board_name") and row.get("display_board_name") != "-":
+            conditions.append(f"{row['display_board_name']} 内强势股数量不明显塌缩")
+        if row.get("risk_labels"):
+            conditions.append("风险标签未继续扩散：" + "、".join(row["risk_labels"]))
+        return conditions[:4] if conditions else ["继续观察强度是否能维持"]
+
+    def _compute_environment(self, market_summary: Dict[str, Any], observation_pool: List[Dict[str, Any]]) -> Dict[str, Any]:
+        total_amount = float(market_summary.get("total_amount") or 0)
+        amount_score = self._bucket_score(total_amount, [(1_500_000_000_000, 25), (1_200_000_000_000, 20), (1_000_000_000_000, 15), (800_000_000_000, 10)], 5)
+
+        limit_up = float(market_summary.get("limit_up_count") or 0)
+        limit_score = self._bucket_score(limit_up, [(80, 15), (60, 12), (40, 9), (20, 5)], 2)
+        broken_limit = float(market_summary.get("broken_limit_count") or 0)
+        if broken_limit <= 10:
+            broken_score = 10
+        elif broken_limit <= 20:
+            broken_score = 6
+        elif broken_limit <= 35:
+            broken_score = 3
+        else:
+            broken_score = 0
+        emotion_score = limit_score + broken_score
+
+        breadth_ratio = self._compute_breadth_ratio(market_summary)
+        breadth_score = self._bucket_score(breadth_ratio, [(60, 20), (50, 15), (40, 10), (30, 5)], 2)
+
+        index_values = [
+            float(market_summary.get("sh_index_pct") or 0),
+            float(market_summary.get("sz_index_pct") or 0),
+            float(market_summary.get("cyb_index_pct") or 0),
+        ]
+        index_avg = sum(index_values) / len(index_values)
+        if index_avg >= 1:
+            index_score = 15
+        elif index_avg >= 0:
+            index_score = 11
+        elif index_avg >= -1:
+            index_score = 7
+        elif index_avg >= -2:
+            index_score = 3
+        else:
+            index_score = 0
+
+        scores = [float(row.get("final_score") or 0) for row in observation_pool[:20]]
+        avg_score = sum(scores) / len(scores) if scores else 0
+        if avg_score >= 95:
+            avg_quality_score = 8
+        elif avg_score >= 90:
+            avg_quality_score = 6
+        elif avg_score >= 85:
+            avg_quality_score = 4
+        else:
+            avg_quality_score = 2 if scores else 0
+        capacity_count = sum(1 for row in observation_pool if self._is_capacity_stock(row))
+        if capacity_count >= 10:
+            capacity_score = 7
+        elif capacity_count >= 5:
+            capacity_score = 5
+        elif capacity_count >= 1:
+            capacity_score = 3
+        else:
+            capacity_score = 0
+        quality_score = avg_quality_score + capacity_score
+
+        total_score = int(amount_score + emotion_score + breadth_score + index_score + quality_score)
+        if total_score >= 80:
+            state = "强"
+        elif total_score >= 60:
+            state = "结构性机会"
+        elif total_score >= 40:
+            state = "弱修复 / 分歧"
+        else:
+            state = "弱"
+
+        return {
+            "score": total_score,
+            "state": state,
+            "breadth_ratio": round(breadth_ratio, 1),
+            "index_avg": round(index_avg, 2),
+            "capacity_count": capacity_count,
+            "parts": [
+                {"label": "成交额", "score": amount_score, "max_score": 25, "value": self._fmt_amount(total_amount)},
+                {"label": "涨停情绪", "score": emotion_score, "max_score": 25, "value": f"涨停 {self._fmt_number(limit_up)} / 炸板 {self._fmt_number(broken_limit)}"},
+                {"label": "市场宽度", "score": breadth_score, "max_score": 20, "value": f"{breadth_ratio:.1f}%"},
+                {"label": "指数环境", "score": index_score, "max_score": 15, "value": f"{index_avg:.2f}%"},
+                {"label": "强势股质量", "score": quality_score, "max_score": 15, "value": f"均分 {avg_score:.1f} / 容量 {capacity_count}"},
+            ],
+        }
+
+    def _bucket_score(self, value: float, buckets: List[tuple], fallback: int) -> int:
+        for threshold, score in buckets:
+            if value >= threshold:
+                return int(score)
+        return int(fallback)
+
+    def _build_mainlines(
+        self,
+        top_boards: List[Dict[str, Any]],
+        strong_board_summary: List[Dict[str, Any]],
+        observation_pool: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        board_scores = {
+            self._display_board_name(row.get("board_name")): float(row.get("board_score") or 0)
+            for row in top_boards
+        }
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for row in observation_pool:
+            grouped.setdefault(row.get("display_board_name") or self._display_board_name(row.get("board_name")), []).append(row)
+
+        summaries = {
+            self._display_board_name(row.get("board_name")): row
+            for row in strong_board_summary
+        }
+        board_names = set(board_scores) | set(grouped) | set(summaries)
+        mainlines = []
+        for board_name in board_names:
+            if not board_name or board_name == "-":
+                continue
+            stocks = sorted(grouped.get(board_name, []), key=lambda row: float(row.get("final_score") or 0), reverse=True)
+            strong_count = int(summaries.get(board_name, {}).get("strong_count") or len(stocks))
+            capacity_count = sum(1 for row in stocks if self._is_capacity_stock(row))
+            core_count = sum(1 for row in stocks if row.get("primary_role") == "核心票")
+            score = round(board_scores.get(board_name, 0) + min(core_count, 10) * 2 + strong_count * 3 + capacity_count * 2, 2)
+            if score >= 60:
+                status = "主线明确"
+            elif score >= 40:
+                status = "方向活跃"
+            elif score >= 20:
+                status = "局部强"
+            else:
+                status = "弱 / 噪音"
+            mainlines.append(
+                {
+                    "board_name": board_name,
+                    "mainline_score": score,
+                    "status": status,
+                    "strong_count": strong_count,
+                    "capacity_count": capacity_count,
+                    "core_count": core_count,
+                    "top_stocks": stocks[:5],
+                }
+            )
+        return sorted(mainlines, key=lambda item: (-float(item["mainline_score"]), -int(item["strong_count"]), str(item["board_name"])))
+
     def _write_json(self, report_data: Dict[str, Any], trade_date: str) -> Path:
         path = self.output_dir / f"market_daily_{trade_date.replace('-', '')}.json"
         with open(path, "w", encoding="utf-8") as f:
@@ -429,98 +743,112 @@ class DailyReportGenerator:
     def _render_html(self, report_data: Dict[str, Any]) -> str:
         metadata = report_data["metadata"]
         market_summary = report_data["market_summary"]
-        top_boards = report_data["top_boards"]
         observation_pool = report_data["observation_pool"]
-        backup_pool = report_data["backup_pool"]
-        role_summary = report_data["role_summary"]
-        board_distribution = report_data["board_distribution"]
-        strong_board_summary = report_data["strong_board_summary"]
-        index_chips_html = self._build_index_chips(market_summary)
-        hero_core_targets_html = self._build_hero_core_targets(observation_pool)
-        observation_modals_html = self._build_observation_modals(observation_pool)
+        environment = report_data.get("environment") or self._compute_environment(market_summary, observation_pool)
+        mainlines = report_data.get("mainlines") or []
 
-        summary_cards = [
-            ("上证指数", self._fmt_number(market_summary.get("sh_index_pct"), suffix="%"), self._pct_class(market_summary.get("sh_index_pct"))),
-            ("深证成指", self._fmt_number(market_summary.get("sz_index_pct"), suffix="%"), self._pct_class(market_summary.get("sz_index_pct"))),
-            ("创业板指", self._fmt_number(market_summary.get("cyb_index_pct"), suffix="%"), self._pct_class(market_summary.get("cyb_index_pct"))),
-            ("两市成交额", self._fmt_amount(market_summary.get("total_amount")), ""),
-            ("上涨家数", self._fmt_number(market_summary.get("up_count"))),
-            ("下跌家数", self._fmt_number(market_summary.get("down_count"))),
-            ("涨停家数", self._fmt_number(market_summary.get("limit_up_count"))),
-            ("连板高度", self._fmt_number(market_summary.get("highest_streak")), ""),
-        ]
+        def chips(labels: List[str], css_class: str = "") -> str:
+            return "".join(f'<span class="chip {css_class}">{self._esc(label)}</span>' for label in labels if label)
 
-        cards_html = "\n".join(
+        env_parts_html = "\n".join(
             f"""
-            <article class="metric-card">
-              <div class="metric-label">{label}</div>
-              <div class="metric-value {extra_class if len(item) > 2 else ''}">{value}</div>
+            <article class="score-part">
+              <div class="part-top"><span>{self._esc(part['label'])}</span><strong>{self._fmt_number(part['score'])}/{self._fmt_number(part['max_score'])}</strong></div>
+              <div class="bar"><span style="width:{min(float(part['score']) / float(part['max_score']) * 100, 100):.0f}%"></span></div>
+              <p>{self._esc(part['value'])}</p>
             </article>
             """
-            for item in summary_cards
-            for label, value, extra_class in [item if len(item) == 3 else (item[0], item[1], "")]
+            for part in environment.get("parts", [])
         )
-        hero_cards = [
-            ("上证", self._fmt_number(market_summary.get("sh_index_pct"), suffix="%"), self._pct_class(market_summary.get("sh_index_pct"))),
-            ("成交", self._fmt_amount(market_summary.get("total_amount")), ""),
-            ("涨停", self._fmt_number(market_summary.get("limit_up_count")), ""),
-            ("强票", self._fmt_number(len(observation_pool)), ""),
-        ]
-        hero_cards_html = "\n".join(
+        mainline_cards_html = "\n".join(
             f"""
-            <article class="metric-card metric-card-compact">
-              <div class="metric-label">{label}</div>
-              <div class="metric-value {extra_class}">{value}</div>
+            <article class="mainline-card">
+              <div class="mainline-head">
+                <div>
+                  <span class="rank">#{index:02d}</span>
+                  <h3>{self._esc(line['board_name'])}</h3>
+                </div>
+                <div class="mainline-score">{self._fmt_number(line.get('mainline_score'))}</div>
+              </div>
+              <div class="mainline-meta">
+                <span>{self._esc(line.get('status'))}</span>
+                <span>强势 {self._fmt_number(line.get('strong_count'))}</span>
+                <span>容量 {self._fmt_number(line.get('capacity_count'))}</span>
+              </div>
+              <div class="mainline-stocks">
+                {''.join(f'<span>{self._esc(stock.get("name"))} <b>{self._fmt_number(stock.get("final_score"))}</b></span>' for stock in line.get('top_stocks', [])[:4]) or '<span>暂无强势股聚合</span>'}
+              </div>
             </article>
             """
-            for label, value, extra_class in hero_cards
+            for index, line in enumerate(mainlines[:6], start=1)
         )
-
-        boards_html = "\n".join(
+        stock_cards_html = "\n".join(
+            f"""
+            <article class="stock-card">
+              <div class="stock-card-top">
+                <div>
+                  <span class="rank">#{index:02d}</span>
+                  <h3>{self._esc(row.get('name'))}</h3>
+                  <p>{self._esc(row.get('symbol'))} · {self._esc(row.get('display_board_name'))}</p>
+                </div>
+                <div class="stock-score">{self._fmt_number(row.get('final_score'))}</div>
+              </div>
+              <div class="chip-row">{chips(row.get('role_labels') or [row.get('primary_role')], 'role-chip')}</div>
+              <dl>
+                <div><dt>成交额</dt><dd>{self._fmt_amount(row.get('amount'))}</dd></div>
+                <div><dt>涨跌幅</dt><dd class="{self._pct_class(row.get('pct_chg'))}">{self._fmt_number(row.get('pct_chg'), '%')}</dd></div>
+                <div><dt>排序</dt><dd>板块 {self._fmt_number(row.get('board_rank'))} / 股票 {self._fmt_number(row.get('stock_rank'))}</dd></div>
+              </dl>
+              <p class="reason">{self._esc(row.get('selected_reason'))}</p>
+            </article>
+            """
+            for index, row in enumerate(observation_pool[:24], start=1)
+        )
+        evidence_rows_html = "\n".join(
             f"""
             <tr>
               <td>{index}</td>
-              <td>{self._esc(board['board_name'])}</td>
-              <td><span class="chip chip-board">{self._esc(board['board_type'])}</span></td>
-              <td>{self._fmt_number(board.get('board_score'))}</td>
-              <td class="{self._pct_class(board.get('pct_chg'))}">{self._fmt_number(board.get('pct_chg'), suffix='%')}</td>
-              <td>{self._esc(board.get('phase_hint'))}</td>
-              <td>{self._fmt_number(board.get('limit_up_count'))}</td>
-              <td>{self._fmt_number(board.get('core_stock_count'))}</td>
+              <td><strong>{self._esc(row.get('name'))}</strong><small>{self._esc(row.get('symbol'))}</small></td>
+              <td>{self._esc(row.get('primary_role'))}</td>
+              <td>{self._esc(row.get('display_board_name'))}</td>
+              <td>{self._fmt_number(row.get('final_score'))}</td>
+              <td>{self._fmt_amount(row.get('amount'))}</td>
+              <td>{self._esc(row.get('selected_reason'))}</td>
             </tr>
             """
-            for index, board in enumerate(top_boards, start=1)
+            for index, row in enumerate(observation_pool[:40], start=1)
         )
-
-        observation_cards_html = "\n".join(
-            self._render_observation_card(index, row)
-            for index, row in enumerate(observation_pool, start=1)
-        )
-
-        backup_html = "\n".join(
+        watch_cards_html = "\n".join(
             f"""
-            <li>
-              <span class="backup-code">{self._esc(row['symbol'])}</span>
-              <strong>{self._esc(row['name'])}</strong>
-              <span class="chip chip-role chip-{self._esc(row['role_tag'])}">{self._role_label(row['role_tag'])}</span>
-              <span class="backup-meta">{self._esc(row.get('board_name'))}</span>
-              <span class="backup-score">{self._fmt_number(row.get('final_score'))}</span>
-            </li>
+            <article class="watch-card">
+              <div class="watch-title">
+                <strong>{self._esc(row.get('name'))}</strong>
+                <span>{self._esc(row.get('primary_role'))}</span>
+              </div>
+              <ul>{''.join(f'<li>{self._esc(condition)}</li>' for condition in row.get('watch_conditions', [])[:4])}</ul>
+            </article>
             """
-            for row in backup_pool
+            for row in observation_pool[:12]
         )
-        strong_board_html = "\n".join(
+        role_counts: Dict[str, int] = {}
+        for row in observation_pool:
+            role = str(row.get("primary_role") or "观察票")
+            role_counts[role] = role_counts.get(role, 0) + 1
+        radar_html = "\n".join(
             f"""
-            <tr>
-              <td>{index}</td>
-              <td>{self._esc(row['board_name'])}</td>
-              <td>{self._fmt_number(row.get('strong_count'))}</td>
-              <td>{self._fmt_amount(row.get('strong_amount'))}</td>
-              <td>{self._fmt_number(row.get('avg_strong_score'))}</td>
-              <td>{self._esc(row.get('top_stock_name'))} {self._esc(row.get('top_stock_symbol'))}</td>
-            </tr>
+            <article class="radar-card">
+              <span>{self._esc(label)}</span>
+              <strong>{self._fmt_number(value)}</strong>
+            </article>
             """
-            for index, row in enumerate(strong_board_summary, start=1)
+            for label, value in [
+                ("强势股", len(observation_pool)),
+                ("容量票", role_counts.get("容量票", 0)),
+                ("情绪票", role_counts.get("情绪票", 0)),
+                ("趋势票", role_counts.get("趋势票", 0)),
+                ("涨停", market_summary.get("limit_up_count")),
+                ("炸板", market_summary.get("broken_limit_count")),
+            ]
         )
 
         return f"""<!DOCTYPE html>
@@ -528,25 +856,24 @@ class DailyReportGenerator:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{self._esc(self.presentation['html']['page_title'])} {self._esc(metadata['trade_date'])}</title>
+  <title>强势股池日报 {self._esc(metadata['trade_date'])}</title>
   <style>
     :root {{
-      --bg: #f7f2e8;
-      --bg-soft: #e9dfce;
-      --panel: rgba(255, 255, 255, 0.62);
-      --panel-strong: rgba(255, 255, 255, 0.78);
-      --ink: #18211b;
-      --muted: #667064;
-      --line: rgba(24, 33, 27, 0.12);
-      --line-strong: rgba(24, 33, 27, 0.16);
-      --accent: #b56a2d;
-      --accent-deep: #8a421b;
-      --accent-soft: rgba(181, 106, 45, 0.13);
-      --accent-glow: rgba(181, 106, 45, 0.14);
-      --rise: #ba3a30;
-      --fall: #13835f;
-      --shadow: 0 24px 58px rgba(33, 27, 18, 0.14);
-      --radius: 24px;
+      --bg: #f3f6f1;
+      --ink: #172033;
+      --muted: #667085;
+      --panel: rgba(255, 255, 255, 0.86);
+      --panel-strong: #ffffff;
+      --line: rgba(23, 32, 51, 0.1);
+      --blue: #175cd3;
+      --amber: #b54708;
+      --green: #067647;
+      --red: #b42318;
+      --soft-blue: #e8f1ff;
+      --soft-amber: #fff4e5;
+      --soft-green: #e7f6ee;
+      --shadow: 0 24px 70px rgba(26, 42, 72, 0.12);
+      --radius: 28px;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -554,9 +881,9 @@ class DailyReportGenerator:
       font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at 90% 0%, rgba(181, 106, 45, 0.16), transparent 24%),
-        radial-gradient(circle at 8% 18%, rgba(19, 131, 95, 0.08), transparent 22%),
-        linear-gradient(135deg, #fbf8f1 0%, var(--bg) 48%, var(--bg-soft) 100%);
+        radial-gradient(circle at 8% 2%, rgba(23, 92, 211, 0.13), transparent 28%),
+        radial-gradient(circle at 94% 0%, rgba(181, 71, 8, 0.15), transparent 26%),
+        linear-gradient(180deg, #fbfcf8 0%, var(--bg) 100%);
       min-height: 100vh;
     }}
     body::before {{
@@ -565,692 +892,332 @@ class DailyReportGenerator:
       inset: 0;
       pointer-events: none;
       background-image:
-        linear-gradient(rgba(24, 33, 27, 0.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(24, 33, 27, 0.035) 1px, transparent 1px);
-      background-size: 30px 30px;
-      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 86%);
+        linear-gradient(rgba(23, 32, 51, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 32, 51, 0.035) 1px, transparent 1px);
+      background-size: 36px 36px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.18), transparent 80%);
     }}
-    .wrap {{
-      width: min(1380px, calc(100vw - 32px));
+    .workbench-shell {{
+      width: min(1440px, calc(100vw - 32px));
       margin: 0 auto;
-      padding: 30px 0 64px;
-    }}
-    .terminal-shell {{
-      position: relative;
+      padding: 28px 0 70px;
     }}
     .hero {{
-      background:
-        radial-gradient(circle at top right, var(--accent-glow), transparent 28%),
-        linear-gradient(145deg, rgba(255,255,255,0.82), rgba(255,247,232,0.58));
-      border: 1px solid var(--line-strong);
-      border-radius: 32px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) 360px;
+      gap: 20px;
+      align-items: stretch;
+      background: linear-gradient(135deg, #172033 0%, #263c63 62%, #8a4b18 100%);
+      border-radius: 34px;
       box-shadow: var(--shadow);
-      padding: 30px 32px 28px;
-      position: relative;
+      padding: 30px;
       overflow: hidden;
       color: var(--ink);
     }}
-    .hero::after {{
-      content: "";
-      position: absolute;
-      inset: auto -70px -70px auto;
-      width: 260px;
-      height: 260px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(181, 106, 45, 0.16), transparent 68%);
-    }}
-    .hero::before {{
-      content: "";
-      position: absolute;
-      inset: -40% auto auto -10%;
-      width: 360px;
-      height: 360px;
-      background: radial-gradient(circle, rgba(19, 131, 95, 0.08), transparent 68%);
-      transform: rotate(18deg);
-    }}
-    .hero-grid {{
-      position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
-      gap: 22px;
-      align-items: stretch;
-    }}
     .eyebrow {{
       font-size: 12px;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 10px;
+      color: rgba(255,255,255,0.66);
     }}
     h1 {{
-      margin: 0;
-      font-size: clamp(34px, 4.8vw, 58px);
+      margin: 14px 0 16px;
+      font-size: clamp(28px, 4vw, 46px);
       line-height: 1;
       font-weight: 900;
-      letter-spacing: -0.07em;
-      max-width: none;
-      white-space: nowrap;
+      letter-spacing: -0.04em;
+      color: #fff9ee;
     }}
-    .hero-sub {{
-      margin-top: 16px;
-      color: var(--muted);
+    .hero p {{
+      margin: 0;
+      max-width: 820px;
+      color: rgba(255,255,255,0.76);
       font-size: 15px;
-      max-width: 72ch;
       line-height: 1.75;
     }}
-    .hero-sub strong {{
-      color: var(--ink);
-    }}
-    .hero-pill-row {{
+    .hero-metrics {{
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 18px;
-    }}
-    .hero-pill {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 14px;
-      border-radius: 999px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      color: var(--ink);
-      font-size: 13px;
-      backdrop-filter: blur(10px);
-    }}
-    .hero-pill strong {{
-      color: var(--ink);
-      font-weight: 700;
-    }}
-    .hero-rail {{
-      padding: 20px;
-      border-radius: 24px;
-      background: linear-gradient(180deg, var(--panel-strong), var(--panel));
-      border: 1px solid var(--line);
-      backdrop-filter: blur(12px);
-    }}
-    .hero-rail-title {{
-      font-size: 12px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--accent-deep);
-      margin-bottom: 14px;
-      font-weight: 700;
-    }}
-    .hero-rail-subtitle {{
-      margin-top: 18px;
-      margin-bottom: 10px;
-      font-size: 12px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--accent-deep);
-      font-weight: 700;
-    }}
-    .hero-metric-grid {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-    }}
-    .hero-core-list {{
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: grid;
-      gap: 8px;
-    }}
-    .hero-core-item button {{
-      display: flex;
-      justify-content: space-between;
       gap: 12px;
-      width: 100%;
-      cursor: pointer;
-      text-align: left;
-      font: inherit;
-      text-decoration: none;
-      color: var(--ink);
-      padding: 12px 14px;
-      border-radius: 16px;
-      background: var(--panel-strong);
-      border: 1px solid var(--line);
-      font-size: 14px;
+      margin-top: 26px;
     }}
-    .hero-core-item strong {{
-      color: var(--accent-deep);
+    .hero-metric, .env-panel {{
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(16px);
+      border-radius: 22px;
+      padding: 14px 16px;
+      color: #fff9ee;
     }}
-    .hero-core-item:nth-child(1) button {{
-      background: linear-gradient(90deg, rgba(181,106,45,0.15), rgba(255,255,255,0.72));
-      border-color: rgba(181, 106, 45, 0.18);
-    }}
-    .hero-core-item:nth-child(2) button {{
-      background: linear-gradient(90deg, rgba(186,58,48,0.1), rgba(255,255,255,0.72));
-      border-color: rgba(186, 58, 48, 0.14);
-    }}
-    .hero-core-item:nth-child(3) button {{
-      background: linear-gradient(90deg, rgba(19,131,95,0.1), rgba(255,255,255,0.72));
-      border-color: rgba(19, 131, 95, 0.14);
-    }}
-    .hero-core-item:nth-child(1) strong {{ color: var(--accent-deep); }}
-    .hero-core-item:nth-child(2) strong {{ color: #9c3028; }}
-    .hero-core-item:nth-child(3) strong {{ color: #116b51; }}
-    .hero-core-name {{
+    .hero-metric span, .env-panel span {{
       display: block;
-      font-weight: 800;
-      font-size: 16px;
-      margin-bottom: 4px;
-    }}
-    .hero-core-tags {{
-      display: block;
-      color: var(--muted);
       font-size: 12px;
+      color: rgba(255,255,255,0.64);
+    }}
+    .hero-metric strong {{
+      display: block;
+      margin-top: 7px;
+      font-size: 20px;
+    }}
+    .env-panel {{
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 260px;
+    }}
+    .env-score {{
+      font-size: 56px;
+      line-height: 0.9;
+      font-weight: 900;
+      letter-spacing: -0.06em;
+      color: #fff9ee;
+    }}
+    .env-state {{
+      display: inline-flex;
+      width: fit-content;
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.16);
+      color: #fff9ee;
+      font-weight: 800;
     }}
     .section {{
       margin-top: 22px;
+      padding: 24px;
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      padding: 24px;
-      backdrop-filter: blur(10px);
     }}
-    .section-title {{
+    .section-head {{
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
-      gap: 12px;
+      gap: 18px;
+      align-items: flex-end;
       margin-bottom: 18px;
     }}
-    .section-title h2 {{
+    .section-kicker {{
+      color: var(--blue);
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 800;
+    }}
+    .section h2 {{
       margin: 0;
-      font-size: 24px;
-      color: var(--accent-deep);
+      font-size: clamp(22px, 2.4vw, 30px);
+      letter-spacing: -0.04em;
     }}
-    .section-title span {{
+    .section-head p {{
+      margin: 6px 0 0;
       color: var(--muted);
-      font-size: 13px;
+      line-height: 1.6;
     }}
-    .metric-grid {{
+    .score-grid, .mainline-grid, .stock-grid, .watch-grid, .radar-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
       gap: 14px;
     }}
-    .metric-card {{
+    .score-part, .mainline-card, .stock-card, .watch-card, .radar-card {{
       background: var(--panel-strong);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-      min-height: 96px;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    }}
-    .metric-card-compact {{
-      min-height: 88px;
-      padding: 14px;
-    }}
-    .metric-label {{
-      color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }}
-    .metric-value {{
-      margin-top: 10px;
-      font-size: 28px;
-      font-weight: 700;
-      line-height: 1;
-    }}
-    .logic-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-    }}
-    .logic-card {{
-      position: relative;
-      overflow: hidden;
-      background: linear-gradient(180deg, rgba(255, 253, 249, 0.96), rgba(252, 244, 232, 0.82));
-      border: 1px solid var(--line);
       border-radius: 22px;
-      padding: 18px 18px 16px;
-      min-height: 210px;
-      box-shadow: 0 12px 34px rgba(73, 54, 35, 0.08);
+      padding: 16px;
     }}
-    .logic-card::after {{
-      content: "";
-      position: absolute;
-      inset: auto -30px -40px auto;
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      background: radial-gradient(circle, var(--accent-glow), transparent 72%);
+    .part-top, .mainline-head, .stock-card-top, .watch-title {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
     }}
-    .logic-step {{
-      color: var(--accent-deep);
-      font-size: 12px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      margin-bottom: 10px;
-    }}
-    .logic-title {{
-      margin: 0;
-      font-size: 22px;
-      line-height: 1.1;
-      font-family: "Iowan Old Style", "Palatino Linotype", serif;
-    }}
-    .logic-desc {{
-      position: relative;
-      z-index: 1;
-      margin-top: 12px;
+    .part-top span, .rank, dt {{
       color: var(--muted);
-      font-size: 14px;
-      line-height: 1.72;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }}
-    .logic-foot {{
-      position: relative;
-      z-index: 1;
-      margin-top: 14px;
-      padding-top: 12px;
-      border-top: 1px solid rgba(84, 60, 40, 0.08);
-      color: var(--ink);
-      font-size: 13px;
-      line-height: 1.6;
+    .bar {{
+      height: 8px;
+      margin: 14px 0 10px;
+      border-radius: 999px;
+      background: #eef2f6;
+      overflow: hidden;
+    }}
+    .bar span {{
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--amber));
     }}
     .rise {{ color: var(--rise); }}
     .fall {{ color: var(--fall); }}
-    .table-wrap {{
-      overflow-x: auto;
-      border-radius: 18px;
-      border: 1px solid var(--line);
-    }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      background: rgba(255, 255, 255, 0.48);
-    }}
-    th, td {{
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      font-size: 14px;
-      white-space: nowrap;
-    }}
-    th {{
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      background: rgba(255, 255, 255, 0.56);
-    }}
-    tbody tr {{
-      transition: background 160ms ease, transform 160ms ease;
-    }}
-    tbody tr:hover {{
-      background: rgba(255, 255, 255, 0.5);
-    }}
-    tr:last-child td {{ border-bottom: none; }}
-    .chip {{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border-radius: 999px;
-      padding: 4px 10px;
-      font-size: 12px;
-      font-weight: 600;
-      background: rgba(24, 33, 27, 0.07);
-      color: var(--ink);
-    }}
-    .chip-board {{
-      background: var(--accent-soft);
-      color: var(--accent-deep);
-    }}
-    .chip-role {{
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }}
-    .chip-dragon {{ background: rgba(186, 58, 48, 0.12); color: #9c3028; }}
-    .chip-center {{ background: rgba(19, 131, 95, 0.12); color: #116b51; }}
-    .chip-follow {{ background: var(--accent-soft); color: var(--accent-deep); }}
-    .chip-trend_strong {{ background: rgba(186, 58, 48, 0.12); color: #9c3028; }}
-    .chip-emotion_strong {{ background: var(--accent-soft); color: var(--accent-deep); }}
-    .chip-capacity_strong {{ background: rgba(19, 131, 95, 0.12); color: #116b51; }}
-    .chip-watchlist {{ background: rgba(24, 33, 27, 0.08); color: var(--muted); }}
-    .pool-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
-      gap: 12px;
-    }}
-    .pool-card {{
-      position: relative;
-      overflow: hidden;
-      background: var(--panel-strong);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 10px 26px rgba(33, 27, 18, 0.08);
-      padding: 0;
-    }}
-    .pool-card::before {{
-      content: "";
-      position: absolute;
-      inset: 0 auto 0 0;
-      width: 4px;
-      background: linear-gradient(180deg, var(--accent), rgba(181, 106, 45, 0.18));
-    }}
-    .pool-summary {{
-      width: 100%;
-      cursor: pointer;
-      border: 0;
-      background: transparent;
-      color: var(--ink);
-      text-align: left;
-      font: inherit;
-      padding: 14px 16px 12px 18px;
-      display: grid;
-      gap: 10px;
-    }}
-    .pool-summary-top {{
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: flex-start;
-    }}
-    .pool-index {{
-      font-size: 11px;
-      color: var(--muted);
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-    }}
-    .pool-name {{
-      margin: 0;
+    .rise {{ color: var(--red); }}
+    .fall {{ color: var(--green); }}
+    .mainline-card h3, .stock-card h3 {{
+      margin: 4px 0 0;
       font-size: 20px;
-      line-height: 1.08;
-      color: var(--ink);
+      letter-spacing: -0.04em;
     }}
-    .pool-symbol {{
-      color: var(--muted);
-      font-size: 12px;
-      margin-top: 2px;
+    .mainline-score, .stock-score {{
+      font-size: 24px;
+      font-weight: 900;
+      color: var(--amber);
     }}
-    .score-badge {{
-      min-width: 64px;
-      text-align: center;
-      background: var(--accent-soft);
-      color: var(--accent);
-      border-radius: 16px;
-      padding: 8px 10px;
-      border: 1px solid rgba(181, 106, 45, 0.16);
-    }}
-    .score-badge strong {{
-      display: block;
-      font-size: 20px;
-      line-height: 1;
-    }}
-    .pool-meta {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }}
-    .backup-list {{
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: 10px;
-    }}
-    .backup-list li {{
-      display: grid;
-      grid-template-columns: auto 1fr auto auto auto;
-      gap: 10px;
-      align-items: center;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 12px 14px;
-      background: var(--panel-strong);
-      font-size: 14px;
-    }}
-    .backup-code, .backup-score {{
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
-    }}
-    .backup-meta {{
-      color: var(--muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }}
-    .modal-overlay {{
-      position: fixed;
-      inset: 0;
-      background: rgba(24, 33, 27, 0.36);
-      backdrop-filter: blur(6px);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      z-index: 50;
-    }}
-    .modal-overlay.is-open {{
-      display: flex;
-    }}
-    .modal-card {{
-      width: min(760px, calc(100vw - 28px));
-      max-height: min(86vh, 900px);
-      overflow: auto;
-      background: linear-gradient(180deg, #fffaf1, #f2e7d5);
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      box-shadow: 0 30px 80px rgba(33, 27, 18, 0.3);
-      padding: 22px;
-    }}
-    .modal-head {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-    }}
-    .modal-head h3 {{
-      margin: 0;
-      font-size: 28px;
-      line-height: 1.05;
-    }}
-    .modal-close {{
-      border: 0;
-      border-radius: 999px;
-      background: rgba(24, 33, 27, 0.08);
-      color: var(--ink);
-      width: 36px;
-      height: 36px;
-      cursor: pointer;
-      font-size: 18px;
-    }}
-    .modal-meta {{
+    .mainline-meta, .mainline-stocks, .chip-row, .hero-metrics {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+    }}
+    .mainline-meta span, .mainline-stocks span {{
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: var(--soft-blue);
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .mainline-stocks {{
       margin-top: 14px;
     }}
-    .modal-body {{
-      margin-top: 18px;
-      display: grid;
-      gap: 12px;
-      color: var(--muted);
-      line-height: 1.7;
-      font-size: 14px;
-    }}
-    .modal-body strong {{
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      background: #eef2f6;
       color: var(--ink);
     }}
-    .modal-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .modal-metric {{
-      padding: 12px 14px;
-      border-radius: 16px;
-      background: var(--panel-strong);
-      border: 1px solid var(--line);
-    }}
-    .modal-metric span {{
-      display: block;
+    .role-chip:nth-child(1) {{ background: var(--soft-amber); color: var(--amber); }}
+    .stock-card p, .score-part p, .reason {{
       color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      line-height: 1.6;
+      font-size: 14px;
     }}
-    .modal-metric strong {{
-      display: block;
-      margin-top: 8px;
-      font-size: 18px;
-      line-height: 1.3;
+    dl {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 16px 0;
     }}
-    @media (max-width: 900px) {{
-      .wrap {{ width: min(100vw - 18px, 1380px); padding-top: 18px; }}
-      .hero, .section {{ padding: 18px; border-radius: 22px; }}
-      .hero-grid {{ grid-template-columns: 1fr; }}
-      .hero-metric-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .backup-list li {{ grid-template-columns: 1fr; }}
-      .modal-grid {{ grid-template-columns: 1fr; }}
+    dd {{ margin: 4px 0 0; font-weight: 800; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid var(--line); border-radius: 20px; }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel-strong); }}
+    th, td {{ padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }}
+    th {{ color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; background: #f8fafc; }}
+    td small {{ display: block; margin-top: 4px; color: var(--muted); }}
+    tr:last-child td {{ border-bottom: 0; }}
+    .watch-card ul {{ margin: 12px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; }}
+    .watch-title span {{ color: var(--amber); font-weight: 800; }}
+    .radar-card strong {{ display: block; margin-top: 10px; font-size: 22px; color: var(--blue); }}
+    @media (max-width: 960px) {{
+      .workbench-shell {{ width: min(100vw - 18px, 1440px); padding-top: 12px; }}
+      .hero {{ grid-template-columns: 1fr; padding: 20px; border-radius: 26px; }}
+      .section {{ padding: 18px; border-radius: 22px; }}
+      .section-head {{ display: block; }}
+      dl {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
 <body>
-  <main class="wrap terminal-shell">
+  <main class="workbench-shell">
     <section class="hero">
-      <div class="hero-grid">
-        <div>
-          <div class="eyebrow">MARKET DAILY REPORT · {self._esc(metadata['trade_date'])}</div>
-          <h1>强势池 Monitor</h1>
-          <div class="hero-sub">
-            {self._esc(self.presentation['html']['hero']['body_template'].format(trade_date=metadata['trade_date']))}
-          </div>
-          <div class="hero-pill-row">{index_chips_html}</div>
+      <div>
+        <div class="eyebrow">MARKET DAILY REPORT · {self._esc(metadata['trade_date'])}</div>
+        <h1>强势股池日报</h1>
+        <p>基于收盘后的市场宽度、板块强度和个股强度，整理当日强势方向、核心标的和次日跟踪条件。</p>
+        <div class="hero-metrics">
+          <div class="hero-metric"><span>上证</span><strong class="{self._pct_class(market_summary.get('sh_index_pct'))}">{self._fmt_number(market_summary.get('sh_index_pct'), '%')}</strong></div>
+          <div class="hero-metric"><span>深成</span><strong class="{self._pct_class(market_summary.get('sz_index_pct'))}">{self._fmt_number(market_summary.get('sz_index_pct'), '%')}</strong></div>
+          <div class="hero-metric"><span>创业板</span><strong class="{self._pct_class(market_summary.get('cyb_index_pct'))}">{self._fmt_number(market_summary.get('cyb_index_pct'), '%')}</strong></div>
+          <div class="hero-metric"><span>成交额</span><strong>{self._fmt_amount(market_summary.get('total_amount'))}</strong></div>
         </div>
-        <aside class="hero-rail">
-          <div class="hero-rail-title">MARKET SNAPSHOT</div>
-          <div class="hero-metric-grid">{hero_cards_html}</div>
-          <div class="hero-rail-subtitle">CORE TARGETS</div>
-          <ul class="hero-core-list">{hero_core_targets_html}</ul>
-        </aside>
       </div>
+      <aside class="env-panel">
+        <div>
+          <span>市场环境</span>
+          <div class="env-score">{self._fmt_number(environment.get('score'))}</div>
+          <div class="env-state">{self._esc(environment.get('state'))}</div>
+        </div>
+        <p>宽度 {self._fmt_number(environment.get('breadth_ratio'), '%')} · 容量票 {self._fmt_number(environment.get('capacity_count'))} 只 · 生成 {self._esc(metadata['generated_at'])}</p>
+      </aside>
     </section>
 
-    <section class="section" id="market-overview">
-      <div class="section-title">
-        <h2>{self._esc(self.presentation['html']['sections']['market_overview'])}</h2>
-        <span>生成时间 {self._esc(metadata['generated_at'])}</span>
+    <section class="section" id="environment">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">市场环境</div>
+          <h2>环境强度</h2>
+          <p>将成交额、涨停情绪、市场宽度、指数表现和强势股质量合成为统一环境分，用于判断当日强弱背景。</p>
+        </div>
       </div>
-      <div class="metric-grid">
-        {cards_html}
-      </div>
+      <div class="score-grid">{env_parts_html}</div>
     </section>
 
-    <section class="section" id="observation-pool">
-      <div class="section-title">
-        <h2>{self._esc(self.presentation['html']['sections']['observation_pool'])}</h2>
-        <span></span>
+    <section class="section" id="mainlines">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">主线结构</div>
+          <h2>强势方向</h2>
+          <p>优先使用概念和交易板块名称，缺失时回落到简化行业名。主线分综合板块强度、强势股数量、核心票和容量票。</p>
+        </div>
       </div>
-      <div class="pool-grid">
-        {observation_cards_html}
-      </div>
+      <div class="mainline-grid">{mainline_cards_html or '<article class="mainline-card">暂无主线聚合</article>'}</div>
     </section>
 
-    <section class="section" id="strong-board-summary">
-      <div class="section-title">
-        <h2>{self._esc(self.presentation['html']['sections']['strong_board_summary'])}</h2>
-        <span>强势股聚集度</span>
+    <section class="section" id="radar">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">结构概览</div>
+          <h2>池内分布</h2>
+          <p>按强势股、容量票、情绪票和趋势票拆解池内结构，先观察整体质量，再进入个股明细。</p>
+        </div>
+      </div>
+      <div class="radar-grid">{radar_html}</div>
+    </section>
+
+    <section class="section" id="stocks">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">强势标的</div>
+          <h2>强势股池</h2>
+          <p>所有入池标的统一排序，并用角色标签说明强度来源，便于快速区分容量、趋势和情绪属性。</p>
+        </div>
+      </div>
+      <div class="stock-grid">{stock_cards_html or '<article class="stock-card">暂无强势股</article>'}</div>
+    </section>
+
+    <section class="section" id="evidence">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">入选依据</div>
+          <h2>个股证据</h2>
+          <p>保留每只股票的角色、所属方向、分数、成交额和入选理由，方便回溯强势判断来源。</p>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>排名</th>
-              <th>板块</th>
-              <th>强势股</th>
-              <th>合计成交</th>
-              <th>均分</th>
-              <th>最强股</th>
-            </tr>
+            <tr><th>#</th><th>股票</th><th>角色</th><th>主线</th><th>总分</th><th>成交额</th><th>证据</th></tr>
           </thead>
-          <tbody>
-            {strong_board_html}
-          </tbody>
+          <tbody>{evidence_rows_html}</tbody>
         </table>
       </div>
     </section>
 
-    <section class="section" id="top-boards">
-      <div class="section-title">
-        <h2>{self._esc(self.presentation['html']['sections']['top_boards'])}</h2>
-        <span>强度排序与阶段定位</span>
+    <section class="section" id="watchlist">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">次日跟踪</div>
+          <h2>观察条件</h2>
+          <p>列出次日需要验证的强度条件，只用于跟踪强势是否延续，不作为买卖指令。</p>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>排名</th>
-              <th>板块</th>
-              <th>类型</th>
-              <th>板块分</th>
-              <th>涨跌幅</th>
-              <th>阶段</th>
-              <th>涨停数</th>
-              <th>核心股数</th>
-            </tr>
-          </thead>
-          <tbody>
-            {boards_html}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="section" id="backup-pool">
-      <div class="section-title">
-        <h2>{self._esc(self.presentation['html']['sections']['backup_pool'])}</h2>
-        <span>二级预案与轮动补位</span>
-      </div>
-      <ul class="backup-list">
-        {backup_html}
-      </ul>
+      <div class="watch-grid">{watch_cards_html or '<article class="watch-card">暂无观察条件</article>'}</div>
     </section>
   </main>
-  {observation_modals_html}
-  <script>
-    (() => {{
-      const openButtons = document.querySelectorAll('[data-modal-open]');
-      const closeButtons = document.querySelectorAll('[data-modal-close]');
-      const closeModal = (modal) => {{
-        if (!modal) return;
-        modal.classList.remove('is-open');
-        document.body.style.overflow = '';
-      }};
-      const openModal = (modalId) => {{
-        const modal = document.getElementById(modalId);
-        if (!modal) return;
-        modal.classList.add('is-open');
-        document.body.style.overflow = 'hidden';
-      }};
-      openButtons.forEach((button) => {{
-        button.addEventListener('click', (event) => {{
-          event.preventDefault();
-          openModal(button.dataset.modalOpen);
-        }});
-      }});
-      closeButtons.forEach((button) => {{
-        button.addEventListener('click', () => closeModal(button.closest('.modal-overlay')));
-      }});
-      document.querySelectorAll('.modal-overlay').forEach((modal) => {{
-        modal.addEventListener('click', (event) => {{
-          if (event.target === modal) closeModal(modal);
-        }});
-      }});
-      document.addEventListener('keydown', (event) => {{
-        if (event.key === 'Escape') {{
-          document.querySelectorAll('.modal-overlay.is-open').forEach(closeModal);
-        }}
-      }});
-    }})();
-  </script>
 </body>
 </html>"""
 
