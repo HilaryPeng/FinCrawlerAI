@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import time
 import unittest
 
+from scripts import collect_market_data
 from scripts import run_market_daily_job
+
+
+def _attention_success_worker(trade_date: str, db_path: str, result_queue) -> None:
+    result_queue.put({"ok": True, "count": 7})
+
+
+def _attention_error_worker(trade_date: str, db_path: str, result_queue) -> None:
+    result_queue.put({"ok": False, "error": "boom"})
+
+
+def _attention_sleep_worker(trade_date: str, db_path: str, result_queue) -> None:
+    time.sleep(5)
 
 
 class RunMarketDailyJobRetryTests(unittest.TestCase):
@@ -94,6 +108,41 @@ class RunMarketDailyJobRetryTests(unittest.TestCase):
 
         self.assertEqual(result, 12)
         self.assertEqual(collector.trade_dates, ["2026-04-24"])
+
+
+class AttentionCollectionGuardTests(unittest.TestCase):
+    def test_returns_attention_count_when_child_succeeds(self) -> None:
+        count = collect_market_data.collect_attention_non_blocking(
+            trade_date="2026-04-29",
+            db_path="fake.db",
+            timeout_seconds=2,
+            worker_fn=_attention_success_worker,
+        )
+
+        self.assertEqual(count, 7)
+
+    def test_returns_zero_when_attention_child_reports_error(self) -> None:
+        count = collect_market_data.collect_attention_non_blocking(
+            trade_date="2026-04-29",
+            db_path="fake.db",
+            timeout_seconds=2,
+            worker_fn=_attention_error_worker,
+        )
+
+        self.assertEqual(count, 0)
+
+    def test_returns_zero_quickly_when_attention_child_hangs(self) -> None:
+        started_at = time.monotonic()
+
+        count = collect_market_data.collect_attention_non_blocking(
+            trade_date="2026-04-29",
+            db_path="fake.db",
+            timeout_seconds=0.2,
+            worker_fn=_attention_sleep_worker,
+        )
+
+        self.assertEqual(count, 0)
+        self.assertLess(time.monotonic() - started_at, 2)
 
 
 if __name__ == "__main__":

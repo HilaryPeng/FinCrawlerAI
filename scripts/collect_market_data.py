@@ -6,6 +6,9 @@ Collects all market data for a given trade date.
 
 import sys
 import argparse
+import multiprocessing as mp
+import os
+import queue
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +25,54 @@ from src.market.collectors import (
     AttentionCollector,
 )
 from src.market.quality import DataQualityChecker
-from collect_market_news import collect_market_news
+from scripts.collect_market_news import collect_market_news
+
+
+ATTENTION_TIMEOUT_SECONDS = int(os.getenv("MARKET_ATTENTION_TIMEOUT_SECONDS", "300"))
+
+
+def _collect_attention_worker(trade_date: str, db_path: str, result_queue) -> None:
+    try:
+        db = DatabaseConnection(Path(db_path))
+        create_all_tables(db)
+        count = AttentionCollector(db).collect(trade_date)
+        result_queue.put({"ok": True, "count": count})
+    except Exception as exc:
+        result_queue.put({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def collect_attention_non_blocking(
+    trade_date: str,
+    db_path: Path | str,
+    timeout_seconds: float = ATTENTION_TIMEOUT_SECONDS,
+    worker_fn=_collect_attention_worker,
+) -> int:
+    result_queue = mp.Queue()
+    process = mp.Process(
+        target=worker_fn,
+        args=(trade_date, str(db_path), result_queue),
+        daemon=True,
+    )
+    process.start()
+    process.join(timeout_seconds)
+
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        print(f"attention_timeout={timeout_seconds}s; attention_skipped=1", flush=True)
+        return 0
+
+    try:
+        result = result_queue.get(timeout=1)
+    except queue.Empty:
+        print(f"attention_failed=no_result exitcode={process.exitcode}; attention_skipped=1", flush=True)
+        return 0
+
+    if not result.get("ok"):
+        print(f"attention_failed={result.get('error', 'unknown')}; attention_skipped=1", flush=True)
+        return 0
+
+    return int(result.get("count", 0) or 0)
 
 
 def collect_market_data(
@@ -93,7 +143,7 @@ def collect_market_data(
 
     if with_attention:
         print("[attention] Collecting EM/Xueqiu/THS screeners...", flush=True)
-        attention_count = AttentionCollector(db).collect(trade_date)
+        attention_count = collect_attention_non_blocking(trade_date, db_path)
         results["attention"] = attention_count
     
     print(f"\n{'='*50}", flush=True)
